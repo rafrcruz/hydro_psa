@@ -1,0 +1,146 @@
+﻿@import 'quill/dist/quill.snow.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@font-face {
+  font-family: 'Ivar Display';
+  src: url('/assets/brand/hydro/fonts/ivar-hydro/display/ivar-hydro-display-regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: 'Ivar Text';
+  src: url('/assets/brand/hydro/fonts/ivar-hydro/text/ivar-hydro-text-regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: 'Ivar Text';
+  src: url('/assets/brand/hydro/fonts/ivar-hydro/text/ivar-hydro-text-italic.ttf') format('truetype');
+  font-weight: 400;
+  font-style: italic;
+}
+
+@font-face {
+  font-family: 'Ivar Text';
+  src: url('/assets/brand/hydro/fonts/ivar-hydro/text/ivar-hydro-text-bold.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: 'Ivar Text';
+  src: url('/assets/brand/hydro/fonts/ivar-hydro/text/ivar-hydro-text-bold-italic.ttf') format('truetype');
+  font-weight: 700;
+  font-style: italic;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #f4f4f4;
+  font-family: 'Ivar Text', serif;
+  font-size: 17px;
+  color: #8c8c8c;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1,
+h2,
+h3 {
+  font-family: 'Ivar Display', serif;
+  color: #000;
+}
+
+.lead,
+.subhead,
+label,
+caption,
+small {
+  font-family: Arial, sans-serif;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border: 1px solid transparent;
+  border-radius: 0.5rem;
+  padding: 0.55rem 1rem;
+  font-family: Arial, sans-serif;
+  font-size: 0.95rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn:focus-visible {
+  outline: 2px solid #768692;
+  outline-offset: 2px;
+}
+
+.btn-primary {
+  background: #444d55;
+  color: #fff;
+}
+
+.btn-primary:hover {
+  background: #333940;
+}
+
+.btn-secondary {
+  background: #fff;
+  color: #444d55;
+  border-color: #444d55;
+}
+
+.btn-secondary:hover {
+  background: #f4f4f4;
+}
+
+.card {
+  overflow: hidden;
+  border-radius: 0.75rem;
+  border: 1px solid #e6e6e6;
+  background: #fff;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.05);
+}
+
+.card-header {
+  background: linear-gradient(to right, #444d55, #768692);
+  padding: 1rem;
+  text-align: center;
+  color: #fff;
+}
+
+.input {
+  width: 100%;
+  border-radius: 0.5rem;
+  border: 1px solid #cfcfcf;
+  padding: 0.55rem 0.75rem;
+  font-family: Arial, sans-serif;
+  font-size: 0.95rem;
+  color: #333940;
+  background: #fff;
+}
+
+.input:focus {
+  border-color: #768692;
+  outline: 2px solid rgb(118 134 146 / 25%);
+  outline-offset: 0;
+}
+
+@media (min-width: 1920px) {
+  body {
+    font-size: 18px;
+  }
+}

@@ -1,24 +1,48 @@
-# Hydro PSA
+﻿# Hydro PSA
 
-Projeto em estágio inicial para análise e automação de cenários de **PSA (Power System Analysis)** com foco em fluxos reproduzíveis.
+Aplicacao de demonstracao para o cliente Hydro.
 
-## Diagnóstico rápido do estado atual
+## Objetivo
 
-No momento, o repositório estava praticamente vazio (apenas `.gitkeep`), sem:
+Este projeto simula um **Portal de Solicitacoes da Automacao (PSA)** com experiencia de service desk:
+- abertura de chamados;
+- fila de atendimento;
+- acompanhamento de status;
+- painel de automacao e visao gerencial.
 
-- documentação de objetivo e escopo;
-- convenções básicas de contribuição;
-- padrões de arquivos ignorados para evitar ruído em commits.
+## Arquitetura da demo
 
-## Melhorias aplicadas
+- Stack: React + Vite + Tailwind.
+- Somente frontend (sem backend real).
+- Persistencia local em IndexedDB com `Dexie`.
+- Seed inicial automatico:
+  - se o banco local estiver vazio, dados mock sao inseridos;
+  - se ja existir banco no navegador, os dados existentes sao reutilizados.
 
-1. **Documentação inicial** (`README.md`) com contexto do projeto.
-2. **Guia de contribuição** (`CONTRIBUTING.md`) com fluxo básico de branch/commit/PR.
-3. **`.gitignore` inicial** para artefatos comuns de Python, Node, IDE e sistema operacional.
+Isso gera comportamento de prototipo de alta fidelidade sem servidor.
 
-## Próximos passos recomendados
+## Como rodar
 
-- Definir stack principal (ex.: Python + notebooks + scripts de simulação).
-- Criar estrutura inicial de pastas (`src/`, `data/`, `notebooks/`, `tests/`).
-- Adicionar CI mínima (lint + testes) para manter qualidade.
-- Publicar um MVP pequeno (ex.: carga de dados + cálculo simples + relatório).
+```bash
+npm install
+npm run dev
+```
+
+Build de producao:
+
+```bash
+npm run build
+```
+
+Lint:
+
+```bash
+npm run lint
+```
+
+## Estrutura principal
+
+- `src/data/`: schema e seed da base mock local.
+- `src/services/mockApi.js`: camada assincrona que simula API.
+- `src/pages/`: telas por perfil (solicitante, executor, automacao, gestao).
+- `src/router/`: rotas e controle de acesso por perfil.
