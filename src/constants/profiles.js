@@ -12,8 +12,8 @@ export const profileUsers = {
     role: 'Solicitante',
   },
   [profiles.EXECUTOR]: {
-    id: 'usr-carlos',
-    name: 'Carlos Souza',
+    id: 'usr-exec-01',
+    name: 'Bruno Silva',
     role: 'Executor',
   },
   [profiles.AUTOMACAO]: {

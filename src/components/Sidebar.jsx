@@ -4,14 +4,14 @@ import { routeConfig } from '../router/routeConfig';
 
 function buildNavPath(path) {
   if (path.includes(':id')) {
-    return path.replace(':id', 'REQ-1001');
+    return path.replace(':id', 'CHD-0001');
   }
   return path;
 }
 
 export default function Sidebar() {
   const { profile } = useProfile();
-  const menuItems = routeConfig[profile] || [];
+  const menuItems = (routeConfig[profile] || []).filter((item) => item.menu !== false);
 
   return (
     <aside className="card h-fit p-3 font-arial" aria-label="Navegação">
@@ -36,3 +36,4 @@ export default function Sidebar() {
     </aside>
   );
 }
+

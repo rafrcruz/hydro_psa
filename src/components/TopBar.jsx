@@ -22,7 +22,7 @@ export default function TopBar() {
           <img
             src="/assets/brand/hydro/logos/secondary/hydro-logo-horizontal-blue.png"
             alt="Hydro"
-            className="h-14 w-auto"
+            className="h-[4.375rem] w-auto"
           />
           <h1 className="text-3xl font-display leading-tight text-black">Portal de Solicitações da Automação</h1>
         </div>

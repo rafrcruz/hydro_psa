@@ -144,3 +144,29 @@ small {
     font-size: 18px;
   }
 }
+
+[contenteditable='true']:empty::before {
+  content: attr(data-placeholder);
+  color: #9ca3af;
+}
+
+.ql-toolbar.ql-snow {
+  border: 1px solid #d1d5db;
+  border-bottom: none;
+  border-top-left-radius: 0.5rem;
+  border-top-right-radius: 0.5rem;
+  background: #f8fafc;
+}
+
+.ql-container.ql-snow {
+  border: 1px solid #d1d5db;
+  border-bottom-left-radius: 0.5rem;
+  border-bottom-right-radius: 0.5rem;
+  font-family: 'Ivar Text', serif;
+  font-size: 1rem;
+}
+
+.ql-editor {
+  min-height: 170px;
+  color: #374151;
+}

@@ -1,66 +1,110 @@
-﻿import { useEffect, useState } from 'react';
+﻿import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import RichTextComposer from '../components/RichTextComposer';
+import ThreadTimeline from '../components/ThreadTimeline';
 import { useProfile } from '../contexts/ProfileContext';
+import { DEMAND_TYPES, STATUS_OPTIONS } from '../data/catalog/requestCatalog';
 import {
   addRequestComment,
   assignRequest,
+  getExecutors,
   getRequestById,
+  updateRequestDemandType,
+  updateRequestGm,
   updateRequestStatus,
 } from '../services/mockApi';
 
 function formatDate(value) {
+  if (!value) {
+    return '-';
+  }
   return new Date(value).toLocaleString('pt-BR');
+}
+
+function canOperate(profile) {
+  return profile === 'Executor' || profile === 'Automação';
 }
 
 export default function ChamadoDetalhesPage() {
   const { id } = useParams();
   const { profile, currentUser } = useProfile();
   const [request, setRequest] = useState(null);
-  const [comment, setComment] = useState('');
+  const [executors, setExecutors] = useState([]);
+  const [commentHtml, setCommentHtml] = useState('');
+  const [commentAttachments, setCommentAttachments] = useState([]);
+  const [gmDraft, setGmDraft] = useState('');
   const [loading, setLoading] = useState(true);
 
-  const refreshRequest = async () => {
+  const isOperator = canOperate(profile);
+
+  const loadRequest = async () => {
+    setLoading(true);
     const data = await getRequestById(id);
     setRequest(data);
+    setGmDraft(data?.gmId || '');
     setLoading(false);
   };
 
   useEffect(() => {
-    let active = true;
-
+    let mounted = true;
     getRequestById(id).then((data) => {
-      if (!active) {
+      if (!mounted) {
         return;
       }
       setRequest(data);
+      setGmDraft(data?.gmId || '');
       setLoading(false);
     });
 
     return () => {
-      active = false;
+      mounted = false;
     };
   }, [id]);
 
+  useEffect(() => {
+    if (isOperator) {
+      getExecutors().then(setExecutors);
+    }
+  }, [isOperator]);
+
   const onAddComment = async (event) => {
     event.preventDefault();
-    if (!comment.trim()) {
-      return;
-    }
+    await addRequestComment(id, currentUser, commentHtml, commentAttachments);
+    setCommentHtml('');
+    setCommentAttachments([]);
+    await loadRequest();
+  };
 
-    await addRequestComment(id, currentUser, comment.trim());
-    setComment('');
-    await refreshRequest();
+  const onCommentAttachment = (event) => {
+    setCommentAttachments(Array.from(event.target.files || []));
+  };
+
+  const onSaveGm = async () => {
+    await updateRequestGm(id, gmDraft, currentUser);
+    await loadRequest();
   };
 
   const onAssignToMe = async () => {
-    await assignRequest(id, currentUser.id);
-    await refreshRequest();
+    await assignRequest(id, currentUser.id, currentUser);
+    await loadRequest();
   };
 
-  const onFinish = async () => {
-    await updateRequestStatus(id, 'Concluido');
-    await refreshRequest();
+  const onAssignOther = async (event) => {
+    await assignRequest(id, event.target.value, currentUser);
+    await loadRequest();
   };
+
+  const onStatusChange = async (event) => {
+    await updateRequestStatus(id, event.target.value, currentUser);
+    await loadRequest();
+  };
+
+  const onDemandTypeChange = async (event) => {
+    await updateRequestDemandType(id, event.target.value, currentUser);
+    await loadRequest();
+  };
+
+  const gmAlert = useMemo(() => request?.gmPendente, [request?.gmPendente]);
 
   if (loading) {
     return <p className="text-aluminium">Carregando...</p>;
@@ -70,71 +114,110 @@ export default function ChamadoDetalhesPage() {
     return (
       <section>
         <p className="text-mid-gray">Chamado não encontrado.</p>
-        <Link to="/" className="mt-2 inline-block text-hydro-blue hover:underline">
-          Voltar
-        </Link>
+        <Link to="/" className="mt-2 inline-block text-hydro-blue hover:underline">Voltar</Link>
       </section>
     );
   }
 
   return (
     <section className="space-y-4">
-      <header>
-        <h2 className="text-2xl">{request.title}</h2>
-        <p className="font-arial text-xs text-mid-gray">{request.id}</p>
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-2xl">{request.titulo}</h2>
+          <p className="text-sm text-mid-gray">{request.id} • Inclusão: {formatDate(request.dataInclusao)}</p>
+        </div>
+        <span className={`rounded px-3 py-1 text-sm font-semibold ${gmAlert ? 'bg-bauxite text-white' : 'bg-green text-white'}`}>
+          GM {gmAlert ? 'pendente' : 'informada'}
+        </span>
       </header>
 
-      <div className="grid gap-2 rounded-lg border border-light-gray p-4 text-sm text-mid-gray md:grid-cols-2">
-        <p><strong>Categoria:</strong> {request.category}</p>
-        <p><strong>Prioridade:</strong> {request.priority}</p>
+      <article className="card grid gap-3 p-4 text-sm text-mid-gray md:grid-cols-2 lg:grid-cols-3">
+        <p><strong>Solicitante:</strong> {request.solicitanteNome}</p>
+        <p><strong>Área:</strong> {request.area}</p>
+        <p><strong>Serviço Macro:</strong> {request.servicoMacro}</p>
+        <p><strong>Subcategoria:</strong> {request.servicoSubcategoria}</p>
+        <p><strong>Tipo de Demanda:</strong> {request.tipoDemanda}</p>
+        <p><strong>Grupo Executor:</strong> {request.grupoExecutor}</p>
+        <p><strong>Responsável:</strong> {request.executorResponsavelNome}</p>
         <p><strong>Status:</strong> {request.status}</p>
-        <p><strong>Solicitante:</strong> {request.requesterName}</p>
-        <p><strong>Executor:</strong> {request.assigneeName}</p>
-        <p><strong>Atualizado:</strong> {formatDate(request.updatedAt)}</p>
-      </div>
+        <p><strong>Prioridade:</strong> {request.prioridade}</p>
+        <p><strong>SLA:</strong> {request.slaHoras}h</p>
+        <p><strong>GM ID:</strong> {request.gmId || 'Não informada'}</p>
+        <p><strong>Atualização:</strong> {formatDate(request.dataAtualizacao)}</p>
+        <p><strong>Fechamento:</strong> {formatDate(request.dataFechamento)}</p>
+      </article>
 
       <article className="card p-4">
         <h3 className="text-lg">Descrição</h3>
-        <p className="mt-2 text-sm text-mid-gray">{request.description}</p>
+        <div className="prose prose-sm mt-2 max-w-none text-mid-gray" dangerouslySetInnerHTML={{ __html: request.descricao }} />
       </article>
 
-      {profile === 'Executor' ? (
-        <div className="flex gap-3">
-          <button onClick={onAssignToMe} className="btn btn-primary">
-            Assumir chamado
-          </button>
-          <button onClick={onFinish} className="btn btn-secondary">
-            Marcar como concluído
-          </button>
-        </div>
-      ) : null}
+      <article className="card space-y-3 p-4">
+        <h3 className="text-lg">Ações do chamado</h3>
 
-      <section className="card p-4">
-        <h3 className="text-lg">Comentários</h3>
-        <div className="mt-3 space-y-3">
-          {request.comments.length ? (
-            request.comments.map((item) => (
-              <article key={item.id} className="rounded border border-light-gray bg-light-gray/50 p-3 text-sm">
-                <p className="font-semibold text-hydro-blue">{item.authorName}</p>
-                <p className="text-mid-gray">{item.message}</p>
-                <p className="mt-1 text-xs text-aluminium">{formatDate(item.createdAt)}</p>
-              </article>
-            ))
-          ) : (
-            <p className="text-sm text-aluminium">Sem comentários ainda.</p>
-          )}
+        <div className="grid gap-3 md:grid-cols-2">
+          <label className="text-sm text-mid-gray">
+            GM / ServiceNow
+            <div className="mt-1 flex gap-2">
+              <input className="input" value={gmDraft} onChange={(event) => setGmDraft(event.target.value)} placeholder="Ex.: GM-01234" />
+              <button type="button" className="btn btn-secondary" onClick={onSaveGm}>Salvar GM</button>
+            </div>
+          </label>
+
+          {isOperator ? (
+            <label className="text-sm text-mid-gray">
+              Status
+              <select className="input mt-1" value={request.status} onChange={onStatusChange}>
+                {STATUS_OPTIONS.map((status) => <option key={status} value={status}>{status}</option>)}
+              </select>
+            </label>
+          ) : null}
+
+          {isOperator ? (
+            <label className="text-sm text-mid-gray">
+              Tipo de Demanda (recalcula prioridade/SLA)
+              <select className="input mt-1" value={request.tipoDemanda} onChange={onDemandTypeChange}>
+                {DEMAND_TYPES.map((demandType) => <option key={demandType} value={demandType}>{demandType}</option>)}
+              </select>
+            </label>
+          ) : null}
+
+          {isOperator ? (
+            <label className="text-sm text-mid-gray">
+              Atribuir responsável
+              <select className="input mt-1" value={request.executorResponsavelId || ''} onChange={onAssignOther}>
+                <option value="">Sem responsável</option>
+                {executors.map((executor) => <option key={executor.id} value={executor.id}>{executor.name}</option>)}
+              </select>
+            </label>
+          ) : null}
         </div>
-        <form onSubmit={onAddComment} className="mt-3 flex flex-col gap-2">
-          <textarea
-            value={comment}
-            onChange={(event) => setComment(event.target.value)}
-            placeholder="Adicionar comentário"
-            className="input min-h-24 text-sm"
-          />
-          <button className="btn btn-primary w-fit">Publicar comentário</button>
+
+        {isOperator ? (
+          <button type="button" onClick={onAssignToMe} className="btn btn-primary w-fit">Assumir para mim</button>
+        ) : null}
+      </article>
+
+      <article className="card space-y-3 p-4">
+        <h3 className="text-lg">Thread / Atividades</h3>
+
+        <form onSubmit={onAddComment} className="space-y-2">
+          <RichTextComposer value={commentHtml} onChange={setCommentHtml} placeholder="Adicione um comentário com formatação e links..." />
+
+          <div className="flex flex-wrap items-center gap-3">
+            <input type="file" multiple className="input max-w-sm" onChange={onCommentAttachment} />
+            <button className="btn btn-primary" type="submit">Publicar comentário</button>
+          </div>
+
+          {commentAttachments.length ? (
+            <ul className="text-sm text-mid-gray">
+              {commentAttachments.map((item) => <li key={`${item.name}-${item.size}`}>{item.name}</li>)}
+            </ul>
+          ) : null}
         </form>
-      </section>
+
+        <ThreadTimeline items={request.thread} />
+      </article>
     </section>
   );
 }
-

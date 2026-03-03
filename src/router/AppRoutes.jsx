@@ -22,12 +22,14 @@ export default function AppRoutes() {
         <Route path="executor/chamados/:id" element={<ChamadoDetalhesPage />} />
 
         <Route path="automacao/painel" element={<AutomacaoPainelPage />} />
+        <Route path="automacao/fila" element={<ExecutorFilaPage />} />
+        <Route path="automacao/chamados/:id" element={<ChamadoDetalhesPage />} />
         <Route path="automacao/catalogo" element={<CatalogoPage />} />
         <Route path="automacao/usuarios" element={<UsuariosPage />} />
 
         <Route path="gestao/dashboard" element={<GestaoDashboardPage />} />
       </Route>
-      <Route path="*" element={<p className="p-6">Pagina nao encontrada.</p>} />
+      <Route path="*" element={<p className="p-6">Página não encontrada.</p>} />
     </Routes>
   );
 }
