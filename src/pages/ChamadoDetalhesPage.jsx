@@ -4,6 +4,7 @@ import RichTextComposer from '../components/RichTextComposer';
 import ThreadTimeline from '../components/ThreadTimeline';
 import { useProfile } from '../contexts/ProfileContext';
 import { STATUS_OPTIONS } from '../data/catalog/requestCatalog';
+import { parseManagementListSearch, createManagementListSearch } from '../lib/managementDrilldown';
 import {
   addRequestComment,
   assignRequest,
@@ -32,6 +33,7 @@ export default function ChamadoDetalhesPage() {
   const [loading, setLoading] = useState(true);
 
   const canEditExecutorActions = profile === 'Executor' || profile === 'Automação';
+  const isReadOnly = profile === 'Gestão';
 
   const loadRequest = async () => {
     setLoading(true);
@@ -65,6 +67,9 @@ export default function ChamadoDetalhesPage() {
 
   const onAddComment = async (event) => {
     event.preventDefault();
+    if (isReadOnly) {
+      return;
+    }
     await addRequestComment(id, currentUser, commentHtml, commentAttachments);
     setCommentHtml('');
     setCommentAttachments([]);
@@ -76,6 +81,9 @@ export default function ChamadoDetalhesPage() {
   };
 
   const onSaveGm = async () => {
+    if (isReadOnly) {
+      return;
+    }
     await updateRequestGm(id, gmDraft, currentUser);
     await loadRequest();
   };
@@ -96,6 +104,7 @@ export default function ChamadoDetalhesPage() {
   };
 
   const gmAlert = useMemo(() => request?.gmPendente, [request?.gmPendente]);
+  const managementContext = useMemo(() => parseManagementListSearch(location.search), [location.search]);
   const backToListPath = useMemo(() => {
     if (location.pathname.startsWith('/solicitante/')) {
       return '/solicitante/chamados';
@@ -106,8 +115,20 @@ export default function ChamadoDetalhesPage() {
     if (location.pathname.startsWith('/automacao/')) {
       return '/automacao/fila';
     }
+    if (location.pathname.startsWith('/gestao/')) {
+      return `/gestao/chamados${location.search || ''}`;
+    }
     return profile === 'Solicitante' ? '/solicitante/chamados' : '/executor/fila';
-  }, [location.pathname, profile]);
+  }, [location.pathname, location.search, profile]);
+  const backToDashboardPath = useMemo(() => {
+    if (!location.pathname.startsWith('/gestao/')) {
+      return '';
+    }
+    return `/gestao/dashboard${createManagementListSearch({
+      filters: managementContext.filters,
+      sourceTab: managementContext.sourceTab,
+    })}`;
+  }, [location.pathname, managementContext.filters, managementContext.sourceTab]);
 
   if (loading) {
     return <p className="text-aluminium">Carregando...</p>;
@@ -128,10 +149,21 @@ export default function ChamadoDetalhesPage() {
         <div>
           <h2 className="text-2xl">{request.titulo}</h2>
           <p className="text-sm text-mid-gray">{request.id} • Inclusão: {formatDate(request.dataInclusao)}</p>
+          {isReadOnly ? (
+            <p className="mt-1 text-xs text-aluminium">Detalhe em modo somente leitura para Gestão.</p>
+          ) : null}
         </div>
-        <span className={`rounded px-3 py-1 text-sm font-semibold ${gmAlert ? 'bg-bauxite text-white' : 'bg-green text-white'}`}>
-          GM {gmAlert ? 'pendente' : 'informada'}
-        </span>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className={`rounded px-3 py-1 text-sm font-semibold ${gmAlert ? 'bg-bauxite text-white' : 'bg-green text-white'}`}>
+            GM {gmAlert ? 'pendente' : 'informada'}
+          </span>
+          {location.pathname.startsWith('/gestao/') ? (
+            <>
+              <Link to={backToListPath} className="btn btn-secondary btn-compact">Voltar à Lista Gerencial</Link>
+              {backToDashboardPath ? <Link to={backToDashboardPath} className="btn btn-secondary btn-compact">Voltar ao Dashboard</Link> : null}
+            </>
+          ) : null}
+        </div>
       </header>
 
       <article className="card grid gap-3 p-4 text-sm text-mid-gray md:grid-cols-2 lg:grid-cols-3">
@@ -162,8 +194,16 @@ export default function ChamadoDetalhesPage() {
           <label className="text-sm text-mid-gray">
             GM / ServiceNow
             <div className="mt-1 flex flex-col gap-2 sm:flex-row sm:items-center">
-              <input className="input sm:flex-1" value={gmDraft} onChange={(event) => setGmDraft(event.target.value)} placeholder="Ex.: GM-01234" />
-              <button type="button" className="btn btn-secondary whitespace-nowrap px-4 py-2 sm:w-auto" onClick={onSaveGm}>Salvar GM</button>
+              <input
+                className="input sm:flex-1"
+                value={gmDraft}
+                onChange={(event) => setGmDraft(event.target.value)}
+                placeholder="Ex.: GM-01234"
+                disabled={isReadOnly}
+              />
+              {!isReadOnly ? (
+                <button type="button" className="btn btn-secondary whitespace-nowrap px-4 py-2 sm:w-auto" onClick={onSaveGm}>Salvar GM</button>
+              ) : null}
             </div>
           </label>
 
@@ -190,25 +230,33 @@ export default function ChamadoDetalhesPage() {
         {canEditExecutorActions ? (
           <button type="button" onClick={onAssignToMe} className="btn btn-primary w-fit">Assumir para mim</button>
         ) : null}
+
+        {isReadOnly ? (
+          <p className="text-sm text-aluminium">Perfil Gestão em modo somente leitura.</p>
+        ) : null}
       </article>
 
       <article className="card space-y-3 p-4">
         <h3 className="text-lg">Thread / Atividades</h3>
 
-        <form onSubmit={onAddComment} className="space-y-2">
-          <RichTextComposer value={commentHtml} onChange={setCommentHtml} placeholder="Adicione um comentário com formatação e links..." />
+        {!isReadOnly ? (
+          <form onSubmit={onAddComment} className="space-y-2">
+            <RichTextComposer value={commentHtml} onChange={setCommentHtml} placeholder="Adicione um comentário com formatação e links..." />
 
-          <div className="flex flex-wrap items-center gap-3">
-            <input type="file" multiple className="input max-w-sm" onChange={onCommentAttachment} />
-            <button className="btn btn-primary" type="submit">Publicar comentário</button>
-          </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <input type="file" multiple className="input max-w-sm" onChange={onCommentAttachment} />
+              <button className="btn btn-primary" type="submit">Publicar comentário</button>
+            </div>
 
-          {commentAttachments.length ? (
-            <ul className="text-sm text-mid-gray">
-              {commentAttachments.map((item) => <li key={`${item.name}-${item.size}`}>{item.name}</li>)}
-            </ul>
-          ) : null}
-        </form>
+            {commentAttachments.length ? (
+              <ul className="text-sm text-mid-gray">
+                {commentAttachments.map((item) => <li key={`${item.name}-${item.size}`}>{item.name}</li>)}
+              </ul>
+            ) : null}
+          </form>
+        ) : (
+          <p className="text-sm text-aluminium">Gestão visualiza histórico em modo leitura.</p>
+        )}
 
         <ThreadTimeline items={request.thread} />
       </article>

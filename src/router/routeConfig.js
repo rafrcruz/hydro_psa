@@ -16,6 +16,8 @@ export const routeConfig = {
     { path: '/solicitante/novo', title: 'Novo chamado' },
     { path: '/automacao/fila', title: 'Fila de chamados' },
     { path: '/gestao/dashboard', title: 'Dashboard gerencial' },
+    { path: '/gestao/chamados', title: 'Lista gerencial', menu: false },
+    { path: '/gestao/chamados/:id', title: 'Detalhes do chamado', menu: false },
     { path: '/solicitante/chamados/:id', title: 'Detalhes do chamado', menu: false },
     { path: '/executor/fila', title: 'Fila de atendimento', menu: false },
     { path: '/executor/chamados/:id', title: 'Detalhes do chamado', menu: false },
@@ -25,6 +27,8 @@ export const routeConfig = {
   ],
   [profiles.GESTAO]: [
     { path: '/gestao/dashboard', title: 'Dashboard de gestão' },
+    { path: '/gestao/chamados', title: 'Lista gerencial', menu: false },
+    { path: '/gestao/chamados/:id', title: 'Detalhes do chamado', menu: false },
   ],
 };
 

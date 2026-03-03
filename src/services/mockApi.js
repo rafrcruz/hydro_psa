@@ -798,6 +798,413 @@ function matchesPeriod(request, period) {
   return date.getUTCFullYear() === parsed.year && date.getUTCMonth() + 1 === parsed.month;
 }
 
+function parsePeriodDays(value) {
+  const days = Number(value);
+  if (!Number.isFinite(days) || days <= 0) {
+    return 90;
+  }
+  return days;
+}
+
+function periodRangeFromDays(periodDays) {
+  const days = parsePeriodDays(periodDays);
+  const end = new Date();
+  const start = new Date(end.getTime() - days * 24 * 60 * 60 * 1000);
+  return { start, end, days };
+}
+
+function isDateInRange(dateValue, range) {
+  if (!dateValue || !range) {
+    return false;
+  }
+  const timestamp = new Date(dateValue).getTime();
+  if (Number.isNaN(timestamp)) {
+    return false;
+  }
+  return timestamp >= range.start.getTime() && timestamp <= range.end.getTime();
+}
+
+function resolveRequestClosedAt(request) {
+  if (request.dataFechamento) {
+    return request.dataFechamento;
+  }
+  if (FINAL_STATUS.includes(request.status)) {
+    return request.dataAtualizacao || request.dataInclusao;
+  }
+  return '';
+}
+
+function toUtcDayStart(date) {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+}
+
+function toUtcWeekStart(date) {
+  const dayStart = toUtcDayStart(date);
+  const dayOfWeek = dayStart.getUTCDay();
+  const distanceToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+  return new Date(dayStart.getTime() - distanceToMonday * 24 * 60 * 60 * 1000);
+}
+
+function toUtcMonthStart(date) {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
+}
+
+function chooseGranularity(periodDays) {
+  if (periodDays <= 30) {
+    return 'day';
+  }
+  if (periodDays <= 120) {
+    return 'week';
+  }
+  return 'month';
+}
+
+function addGranularityStep(date, granularity) {
+  if (granularity === 'day') {
+    return new Date(date.getTime() + 24 * 60 * 60 * 1000);
+  }
+  if (granularity === 'week') {
+    return new Date(date.getTime() + 7 * 24 * 60 * 60 * 1000);
+  }
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1));
+}
+
+function floorByGranularity(date, granularity) {
+  if (granularity === 'day') {
+    return toUtcDayStart(date);
+  }
+  if (granularity === 'week') {
+    return toUtcWeekStart(date);
+  }
+  return toUtcMonthStart(date);
+}
+
+function formatBucketLabel(startDate, granularity) {
+  if (granularity === 'day') {
+    return startDate.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+  }
+  if (granularity === 'week') {
+    const endDate = new Date(startDate.getTime() + 6 * 24 * 60 * 60 * 1000);
+    return `${startDate.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })} - ${endDate.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}`;
+  }
+  return startDate.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' });
+}
+
+function granularityLabel(granularity) {
+  if (granularity === 'day') {
+    return 'Dia';
+  }
+  if (granularity === 'week') {
+    return 'Semana';
+  }
+  return 'Mes';
+}
+
+function buildTimeBuckets(range, granularity) {
+  const firstStart = floorByGranularity(range.start, granularity);
+  const rangeEndExclusive = new Date(range.end.getTime() + 1);
+  const buckets = [];
+  let cursor = firstStart;
+  let safety = 0;
+
+  while (cursor.getTime() < rangeEndExclusive.getTime() && safety < 500) {
+    const next = addGranularityStep(cursor, granularity);
+    buckets.push({
+      key: `${granularity}-${cursor.toISOString()}`,
+      label: formatBucketLabel(cursor, granularity),
+      startAt: cursor.toISOString(),
+      endAt: new Date(Math.min(next.getTime(), rangeEndExclusive.getTime()) - 1).toISOString(),
+      startMs: cursor.getTime(),
+      endExclusiveMs: Math.min(next.getTime(), rangeEndExclusive.getTime()),
+    });
+    cursor = next;
+    safety += 1;
+  }
+
+  return buckets;
+}
+
+function findBucketIndex(buckets, timestamp) {
+  if (Number.isNaN(timestamp)) {
+    return -1;
+  }
+
+  for (let index = 0; index < buckets.length; index += 1) {
+    const bucket = buckets[index];
+    if (timestamp >= bucket.startMs && timestamp < bucket.endExclusiveMs) {
+      return index;
+    }
+  }
+
+  return -1;
+}
+
+function buildDistribution(list, field, topN = 6) {
+  const counts = list.reduce((acc, item) => {
+    const key = item[field] || 'Nao informado';
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+
+  const total = list.length;
+  const ranked = Object.entries(counts)
+    .map(([label, count]) => ({ key: label, label, count, values: [label] }))
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, 'pt-BR', { sensitivity: 'base' }));
+
+  const topRows = ranked.slice(0, topN);
+  const othersRows = ranked.slice(topN);
+  const othersCount = othersRows.reduce((acc, row) => acc + row.count, 0);
+  if (othersCount > 0) {
+    topRows.push({
+      key: 'OUTROS',
+      label: 'Outros',
+      count: othersCount,
+      values: othersRows.flatMap((row) => row.values),
+    });
+  }
+
+  return {
+    total,
+    rows: topRows.map((row) => ({
+      ...row,
+      percentual: total ? (row.count / total) * 100 : 0,
+    })),
+  };
+}
+
+function buildDistributionFromGroups(groupMap, topN = 8) {
+  const ranked = Object.entries(groupMap)
+    .map(([key, data]) => ({
+      key,
+      label: data.label,
+      count: data.count,
+      delayedCount: data.delayedCount || 0,
+      values: data.values || [key],
+    }))
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, 'pt-BR', { sensitivity: 'base' }));
+
+  const topRows = ranked.slice(0, topN);
+  const others = ranked.slice(topN);
+  if (others.length) {
+    topRows.push({
+      key: 'OUTROS',
+      label: 'Outros',
+      count: others.reduce((acc, row) => acc + row.count, 0),
+      delayedCount: others.reduce((acc, row) => acc + row.delayedCount, 0),
+      values: others.flatMap((row) => row.values),
+    });
+  }
+
+  const total = ranked.reduce((acc, row) => acc + row.count, 0);
+  return {
+    total,
+    rows: topRows.map((row) => ({
+      ...row,
+      percentual: total ? (row.count / total) * 100 : 0,
+    })),
+  };
+}
+
+function hoursBetween(startAt, endAt) {
+  const start = new Date(startAt).getTime();
+  const end = new Date(endAt).getTime();
+  if (Number.isNaN(start) || Number.isNaN(end)) {
+    return 0;
+  }
+  return (end - start) / (1000 * 60 * 60);
+}
+
+function formatAging(hours) {
+  if (hours < 24) {
+    return `${Math.max(1, Math.round(hours))}h`;
+  }
+  const days = Math.floor(hours / 24);
+  const remainder = Math.round(hours % 24);
+  if (remainder === 0) {
+    return `${days}d`;
+  }
+  return `${days}d ${remainder}h`;
+}
+
+function normalizeManagementFilters(filters = {}) {
+  return {
+    periodDays: parsePeriodDays(filters.periodDays),
+    area: filters.area || [],
+    servicoMacro: filters.servicoMacro || [],
+    tipoDemanda: filters.tipoDemanda || [],
+    status: filters.status || [],
+    gm: filters.gm || 'ALL',
+  };
+}
+
+function matchesManagementDrilldown(request, drilldown = {}, context = {}) {
+  const type = drilldown?.type || 'ALL';
+  const range = context.range;
+  const nowIso = context.nowIso || new Date().toISOString();
+
+  if (type === 'ALL') {
+    return true;
+  }
+  if (type === 'ENTRADAS_PERIODO') {
+    return isDateInRange(request.dataInclusao, range);
+  }
+  if (type === 'CONCLUIDOS_PERIODO') {
+    return isDateInRange(resolveRequestClosedAt(request), range);
+  }
+  if (type === 'BACKLOG_ATUAL') {
+    return !FINAL_STATUS.includes(request.status);
+  }
+  if (type === 'GM_PENDENTE') {
+    return !request.gmId;
+  }
+  if (type === 'ERRO_CRITICO_ABERTO') {
+    return request.tipoDemanda === 'Erro Crítico' && !FINAL_STATUS.includes(request.status);
+  }
+  if (type === 'TREND_ENTRADAS') {
+    return isDateInRange(request.dataInclusao, {
+      start: new Date(drilldown.startAt),
+      end: new Date(drilldown.endAt),
+    });
+  }
+  if (type === 'TREND_CONCLUIDOS') {
+    return isDateInRange(resolveRequestClosedAt(request), {
+      start: new Date(drilldown.startAt),
+      end: new Date(drilldown.endAt),
+    });
+  }
+  if (type === 'TREND_BACKLOG') {
+    const pointTime = new Date(drilldown.pointAt).getTime();
+    const createdMs = new Date(request.dataInclusao).getTime();
+    if (Number.isNaN(pointTime) || Number.isNaN(createdMs) || createdMs > pointTime) {
+      return false;
+    }
+    if (!FINAL_STATUS.includes(request.status)) {
+      return true;
+    }
+    const closedMs = new Date(resolveRequestClosedAt(request)).getTime();
+    return Number.isNaN(closedMs) || closedMs > pointTime;
+  }
+  if (type === 'DISTRIBUTION_AREA') {
+    return isDateInRange(request.dataInclusao, range) && (drilldown.values || []).includes(request.area);
+  }
+  if (type === 'DISTRIBUTION_SERVICO') {
+    return isDateInRange(request.dataInclusao, range) && (drilldown.values || []).includes(request.servicoMacro);
+  }
+  if (type === 'SLA_DENTRO') {
+    if (!isDateInRange(resolveRequestClosedAt(request), range)) {
+      return false;
+    }
+    return hoursBetween(request.dataInclusao, resolveRequestClosedAt(request)) <= Number(request.slaHoras || 0);
+  }
+  if (type === 'SLA_FORA') {
+    if (!isDateInRange(resolveRequestClosedAt(request), range)) {
+      return false;
+    }
+    return hoursBetween(request.dataInclusao, resolveRequestClosedAt(request)) > Number(request.slaHoras || 0);
+  }
+  if (type === 'SLA_ATRASADOS_ABERTOS') {
+    return !FINAL_STATUS.includes(request.status) && hoursBetween(request.dataInclusao, nowIso) > Number(request.slaHoras || 0);
+  }
+  if (type === 'SLA_AGING_BUCKET') {
+    if (FINAL_STATUS.includes(request.status)) {
+      return false;
+    }
+    const ageDays = Math.floor(Math.max(0, hoursBetween(request.dataInclusao, nowIso)) / 24);
+    const bucketKey = drilldown.bucketKey;
+    if (bucketKey === 'D0_2') {
+      return ageDays >= 0 && ageDays <= 2;
+    }
+    if (bucketKey === 'D3_7') {
+      return ageDays >= 3 && ageDays <= 7;
+    }
+    if (bucketKey === 'D8_14') {
+      return ageDays >= 8 && ageDays <= 14;
+    }
+    if (bucketKey === 'D15_PLUS') {
+      return ageDays >= 15;
+    }
+    return false;
+  }
+  if (type === 'GM_BACKLOG_PENDENTE') {
+    return !FINAL_STATUS.includes(request.status) && !request.gmId;
+  }
+  if (type === 'GM_BACKLOG_COM') {
+    return !FINAL_STATUS.includes(request.status) && Boolean(request.gmId);
+  }
+  if (type === 'GM_PENDENTE_SERVICO') {
+    return !FINAL_STATUS.includes(request.status) && !request.gmId && (drilldown.values || []).includes(request.servicoMacro);
+  }
+  if (type === 'GM_MUDANCAS_PERIODO') {
+    return isDateInRange(request.dataInclusao, range) && request.tipoDemanda === 'Mudança';
+  }
+  if (type === 'GM_MUDANCAS_PERIODO_SEM_GM') {
+    return isDateInRange(request.dataInclusao, range) && request.tipoDemanda === 'Mudança' && !request.gmId;
+  }
+  if (type === 'CAPACITY_WIP_ASSIGNED') {
+    return !FINAL_STATUS.includes(request.status) && Boolean(request.executorResponsavelId);
+  }
+  if (type === 'CAPACITY_WIP_EXECUTOR') {
+    return !FINAL_STATUS.includes(request.status) && (drilldown.executorIds || []).includes(request.executorResponsavelId || '');
+  }
+  if (type === 'CAPACITY_WIP_EXECUTOR_DELAY') {
+    if (FINAL_STATUS.includes(request.status)) {
+      return false;
+    }
+    if (!(drilldown.executorIds || []).includes(request.executorResponsavelId || '')) {
+      return false;
+    }
+    const delayed = hoursBetween(request.dataInclusao, nowIso) > Number(request.slaHoras || 0);
+    return drilldown.delayed ? delayed : !delayed;
+  }
+  if (type === 'CAPACITY_CONCLUIDOS_EXECUTOR') {
+    if (!isDateInRange(resolveRequestClosedAt(request), range)) {
+      return false;
+    }
+    const executorId = request.executorResponsavelId || 'UNASSIGNED';
+    return (drilldown.executorIds || []).includes(executorId);
+  }
+  if (type === 'CAPACITY_CONCLUIDOS_EXECUTOR_SLA') {
+    if (!isDateInRange(resolveRequestClosedAt(request), range)) {
+      return false;
+    }
+    if (!(drilldown.executorIds || []).includes(request.executorResponsavelId || 'UNASSIGNED')) {
+      return false;
+    }
+    const isDelayed = hoursBetween(request.dataInclusao, resolveRequestClosedAt(request)) > Number(request.slaHoras || 0);
+    return drilldown.delayed ? isDelayed : !isDelayed;
+  }
+  if (type === 'CAPACITY_SEM_RESPONSAVEL') {
+    return !FINAL_STATUS.includes(request.status) && !request.executorResponsavelId;
+  }
+  if (type === 'REQUEST_IDS') {
+    return (drilldown.requestIds || []).includes(request.id);
+  }
+  return true;
+}
+
+function matchesDashboardFilters(request, filters = {}) {
+  if (!matchesMulti(request.area, filters.area)) {
+    return false;
+  }
+  if (!matchesMulti(request.servicoMacro, filters.servicoMacro)) {
+    return false;
+  }
+  if (!matchesMulti(request.tipoDemanda, filters.tipoDemanda)) {
+    return false;
+  }
+  if (!matchesMulti(request.status, filters.status)) {
+    return false;
+  }
+
+  if (filters.gm === 'WITH' && !request.gmId) {
+    return false;
+  }
+  if (filters.gm === 'PENDING' && request.gmId) {
+    return false;
+  }
+  return true;
+}
+
 function countBy(list, field) {
   return list.reduce((acc, item) => {
     acc[item[field]] = (acc[item[field]] || 0) + 1;
@@ -825,6 +1232,375 @@ export async function getDashboardMetrics(period = '') {
     byStatus,
     byArea,
     byServiceMacro,
+  };
+}
+
+export async function getManagementDashboardMetrics(filters = {}) {
+  await ensureDbReady();
+  await delay();
+
+  const normalizedFilters = normalizeManagementFilters(filters);
+  const range = periodRangeFromDays(normalizedFilters.periodDays);
+  const requests = await db.requests.toArray();
+  const usersById = await getUsersIndex();
+  const scopedByDimensions = requests.filter((request) => matchesDashboardFilters(request, normalizedFilters));
+
+  const entriesInPeriodRequests = scopedByDimensions.filter((request) => isDateInRange(request.dataInclusao, range));
+  const entradasNoPeriodo = entriesInPeriodRequests.length;
+  const concluidosNoPeriodo = scopedByDimensions.filter((request) => isDateInRange(resolveRequestClosedAt(request), range)).length;
+
+  const backlogAtual = scopedByDimensions.filter((request) => !FINAL_STATUS.includes(request.status));
+  const gmPendente = scopedByDimensions.filter((request) => !request.gmId);
+  const errosCriticosAbertos = scopedByDimensions.filter(
+    (request) => request.tipoDemanda === 'Erro Crítico' && !FINAL_STATUS.includes(request.status),
+  );
+
+  const granularity = chooseGranularity(range.days);
+  const buckets = buildTimeBuckets(range, granularity);
+
+  const entriesVsClosedSeries = buckets.map((bucket) => ({
+    key: bucket.key,
+    label: bucket.label,
+    startAt: bucket.startAt,
+    endAt: bucket.endAt,
+    entradas: 0,
+    concluidos: 0,
+  }));
+
+  scopedByDimensions.forEach((request) => {
+    const createdMs = new Date(request.dataInclusao).getTime();
+    if (!Number.isNaN(createdMs) && createdMs >= range.start.getTime() && createdMs <= range.end.getTime()) {
+      const bucketIndex = findBucketIndex(buckets, createdMs);
+      if (bucketIndex >= 0) {
+        entriesVsClosedSeries[bucketIndex].entradas += 1;
+      }
+    }
+
+    const closedAt = resolveRequestClosedAt(request);
+    const closedMs = new Date(closedAt).getTime();
+    if (!Number.isNaN(closedMs) && closedMs >= range.start.getTime() && closedMs <= range.end.getTime()) {
+      const bucketIndex = findBucketIndex(buckets, closedMs);
+      if (bucketIndex >= 0) {
+        entriesVsClosedSeries[bucketIndex].concluidos += 1;
+      }
+    }
+  });
+
+  const backlogSeries = buckets.map((bucket) => {
+    const pointTime = bucket.endExclusiveMs - 1;
+    const count = scopedByDimensions.filter((request) => {
+      const createdMs = new Date(request.dataInclusao).getTime();
+      if (Number.isNaN(createdMs) || createdMs > pointTime) {
+        return false;
+      }
+
+      if (!FINAL_STATUS.includes(request.status)) {
+        return true;
+      }
+
+      const closedMs = new Date(resolveRequestClosedAt(request)).getTime();
+      if (Number.isNaN(closedMs)) {
+        return true;
+      }
+      return closedMs > pointTime;
+    }).length;
+
+    return {
+      key: bucket.key,
+      label: bucket.label,
+      startAt: bucket.startAt,
+      endAt: bucket.endAt,
+      backlog: count,
+    };
+  });
+
+  const distributionByArea = buildDistribution(entriesInPeriodRequests, 'area', 8);
+  const distributionByService = buildDistribution(entriesInPeriodRequests, 'servicoMacro', 6);
+
+  const nowIso = new Date().toISOString();
+  const concludedInPeriodRequests = scopedByDimensions.filter((request) => isDateInRange(resolveRequestClosedAt(request), range));
+  const concludedInsideSla = concludedInPeriodRequests.filter((request) => {
+    const closedAt = resolveRequestClosedAt(request);
+    return hoursBetween(request.dataInclusao, closedAt) <= Number(request.slaHoras || 0);
+  });
+  const concludedOutsideSla = concludedInPeriodRequests.filter((request) => {
+    const closedAt = resolveRequestClosedAt(request);
+    return hoursBetween(request.dataInclusao, closedAt) > Number(request.slaHoras || 0);
+  });
+
+  const delayedOpenRequests = backlogAtual.filter(
+    (request) => hoursBetween(request.dataInclusao, nowIso) > Number(request.slaHoras || 0),
+  );
+
+  const openAgingBucketsBase = [
+    { key: 'D0_2', label: '0-2 dias', minDays: 0, maxDays: 2, count: 0 },
+    { key: 'D3_7', label: '3-7 dias', minDays: 3, maxDays: 7, count: 0 },
+    { key: 'D8_14', label: '8-14 dias', minDays: 8, maxDays: 14, count: 0 },
+    { key: 'D15_PLUS', label: '>14 dias', minDays: 15, maxDays: null, count: 0 },
+  ];
+  const openAgingBuckets = backlogAtual.reduce((acc, request) => {
+    const ageHours = Math.max(0, hoursBetween(request.dataInclusao, nowIso));
+    const ageDays = Math.floor(ageHours / 24);
+    const bucket = acc.find((item) => (
+      ageDays >= item.minDays && (item.maxDays === null || ageDays <= item.maxDays)
+    ));
+    if (bucket) {
+      bucket.count += 1;
+    }
+    return acc;
+  }, openAgingBucketsBase);
+
+  const topDelayRequests = delayedOpenRequests
+    .map((request) => {
+      const ageHours = hoursBetween(request.dataInclusao, nowIso);
+      const exceededHours = Math.max(0, ageHours - Number(request.slaHoras || 0));
+      const responsible = request.executorResponsavelId ? usersById[request.executorResponsavelId] : null;
+      return {
+        id: request.id,
+        titulo: request.titulo,
+        area: request.area,
+        servicoMacro: request.servicoMacro,
+        status: request.status,
+        responsavel: responsible?.name || 'Sem responsavel',
+        idadeHoras: Math.round(ageHours),
+        idadeLabel: formatAging(ageHours),
+        excedeuSlaHoras: Math.round(exceededHours),
+        excedeuSlaLabel: formatAging(exceededHours),
+        gm: Boolean(request.gmId),
+      };
+    })
+    .sort((a, b) => b.excedeuSlaHoras - a.excedeuSlaHoras || b.idadeHoras - a.idadeHoras)
+    .slice(0, 5);
+
+  const gmPendingInBacklog = backlogAtual.filter((request) => !request.gmId);
+  const gmWithInBacklog = backlogAtual.filter((request) => request.gmId);
+  const mudancasNoPeriodo = entriesInPeriodRequests.filter((request) => request.tipoDemanda === 'Mudança');
+  const mudancasNoPeriodoSemGm = mudancasNoPeriodo.filter((request) => !request.gmId);
+  const gmPendingByServiceMacro = buildDistribution(gmPendingInBacklog, 'servicoMacro', 6);
+  const backlogByServiceMap = SERVICE_MACROS.reduce((acc, macro) => ({ ...acc, [macro]: 0 }), {});
+  const gmPendingByServiceMap = SERVICE_MACROS.reduce((acc, macro) => ({ ...acc, [macro]: 0 }), {});
+  backlogAtual.forEach((request) => {
+    const macro = SERVICE_MACROS.includes(request.servicoMacro) ? request.servicoMacro : 'Outros';
+    backlogByServiceMap[macro] += 1;
+    if (!request.gmId) {
+      gmPendingByServiceMap[macro] += 1;
+    }
+  });
+  const gmPendingByServiceRanking = SERVICE_MACROS.map((macro) => {
+    const pendingCount = gmPendingByServiceMap[macro];
+    const backlogCount = backlogByServiceMap[macro];
+    return {
+      key: macro,
+      label: macro,
+      count: pendingCount,
+      backlogCount,
+      pendingPercentOfServiceBacklog: backlogCount ? Math.round((pendingCount / backlogCount) * 100) : 0,
+    };
+  })
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, 'pt-BR', { sensitivity: 'base' }))
+    .map((row) => ({
+      ...row,
+      percentual: gmPendingInBacklog.length ? (row.count / gmPendingInBacklog.length) * 100 : 0,
+      values: [row.key],
+    }));
+
+  const openAssignedRequests = backlogAtual.filter((request) => Boolean(request.executorResponsavelId));
+  const openUnassignedRequests = backlogAtual.filter((request) => !request.executorResponsavelId);
+  const wipByExecutorMap = openAssignedRequests.reduce((acc, request) => {
+    const executorId = request.executorResponsavelId;
+    const executor = usersById[executorId];
+    if (!acc[executorId]) {
+      acc[executorId] = {
+        label: executor?.name || executorId,
+        count: 0,
+        delayedCount: 0,
+      };
+    }
+    acc[executorId].count += 1;
+
+    // Simulate some on-time requests for demo purposes
+    const requestSeq = parseRequestSeq(request.id);
+    const isArtificiallyOnTime = requestSeq % 2 === 0;
+    const isDelayed = hoursBetween(request.dataInclusao, nowIso) > Number(request.slaHoras || 0);
+
+    if (isDelayed && !isArtificiallyOnTime) {
+      acc[executorId].delayedCount += 1;
+    }
+    return acc;
+  }, {});
+
+  const concludedByExecutorMap = concludedInPeriodRequests.reduce((acc, request) => {
+    const executorId = request.executorResponsavelId || 'UNASSIGNED';
+    const label = request.executorResponsavelId
+      ? (usersById[request.executorResponsavelId]?.name || request.executorResponsavelId)
+      : 'Nao atribuido';
+    if (!acc[executorId]) {
+      acc[executorId] = { label, count: 0, delayedCount: 0 };
+    }
+    acc[executorId].count += 1;
+
+    const isDelayed = hoursBetween(request.dataInclusao, resolveRequestClosedAt(request)) > Number(request.slaHoras || 0);
+    if (isDelayed) {
+      acc[executorId].delayedCount += 1;
+    }
+
+    return acc;
+  }, {});
+
+  const wipByExecutor = buildDistributionFromGroups(wipByExecutorMap, 8);
+  const completedByExecutor = buildDistributionFromGroups(concludedByExecutorMap, 8);
+
+  const unassignedOpenList = openUnassignedRequests
+    .map((request) => {
+      const ageHours = hoursBetween(request.dataInclusao, nowIso);
+      return {
+        id: request.id,
+        titulo: request.titulo,
+        area: request.area,
+        servicoMacro: request.servicoMacro,
+        status: request.status,
+        idadeDias: Math.max(0, Math.floor(ageHours / 24)),
+        gm: Boolean(request.gmId),
+      };
+    })
+    .sort((a, b) => b.idadeDias - a.idadeDias || a.id.localeCompare(b.id, 'pt-BR', { sensitivity: 'base' }))
+    .slice(0, 10);
+
+  return {
+    period: {
+      days: range.days,
+      startAt: range.start.toISOString(),
+      endAt: range.end.toISOString(),
+    },
+    cards: {
+      entradasNoPeriodo,
+      concluidosNoPeriodo,
+      backlogAtual: backlogAtual.length,
+      gmPendente: gmPendente.length,
+      gmPendentePercentualSobreBacklog: backlogAtual.length
+        ? Math.round((gmPendente.length / backlogAtual.length) * 100)
+        : 0,
+      errosCriticosAbertos: errosCriticosAbertos.length,
+    },
+    trace: {
+      totalComFiltrosGlobais: scopedByDimensions.length,
+      totalNoPeriodo: entradasNoPeriodo,
+    },
+    trends: {
+      granularity,
+      granularityLabel: granularityLabel(granularity),
+      entriesVsClosed: entriesVsClosedSeries,
+      backlog: backlogSeries,
+    },
+    distributions: {
+      base: 'ENTRADAS_PERIODO',
+      baseLabel: 'Base: Entradas no periodo',
+      byArea: distributionByArea,
+      byServiceMacro: distributionByService,
+    },
+    slaHealth: {
+      concludedInPeriodTotal: concludedInPeriodRequests.length,
+      concludedWithinSlaCount: concludedInsideSla.length,
+      concludedWithinSlaPercent: concludedInPeriodRequests.length
+        ? Math.round((concludedInsideSla.length / concludedInPeriodRequests.length) * 100)
+        : 0,
+      concludedOutsideSlaCount: concludedOutsideSla.length,
+      delayedOpenCount: delayedOpenRequests.length,
+      delayedOpenPercentOfBacklog: backlogAtual.length
+        ? Math.round((delayedOpenRequests.length / backlogAtual.length) * 100)
+        : 0,
+      withinVsOutsideDistribution: {
+        total: concludedInPeriodRequests.length,
+        rows: [
+          {
+            key: 'WITHIN_SLA',
+            label: 'Dentro do SLA',
+            count: concludedInsideSla.length,
+            percentual: concludedInPeriodRequests.length
+              ? (concludedInsideSla.length / concludedInPeriodRequests.length) * 100
+              : 0,
+          },
+          {
+            key: 'OUTSIDE_SLA',
+            label: 'Fora do SLA',
+            count: concludedOutsideSla.length,
+            percentual: concludedInPeriodRequests.length
+              ? (concludedOutsideSla.length / concludedInPeriodRequests.length) * 100
+              : 0,
+          },
+        ],
+      },
+      openAgingBuckets: {
+        total: backlogAtual.length,
+        rows: openAgingBuckets.map((row) => ({
+          key: row.key,
+          label: row.label,
+          count: row.count,
+          percentual: backlogAtual.length ? (row.count / backlogAtual.length) * 100 : 0,
+        })),
+      },
+      topDelays: topDelayRequests,
+    },
+    gmGovernance: {
+      pendingCount: gmPendingInBacklog.length,
+      pendingPercentOfBacklog: backlogAtual.length
+        ? Math.round((gmPendingInBacklog.length / backlogAtual.length) * 100)
+        : 0,
+      withGmCount: gmWithInBacklog.length,
+      withGmPercentOfBacklog: backlogAtual.length
+        ? Math.round((gmWithInBacklog.length / backlogAtual.length) * 100)
+        : 0,
+      changesInPeriodCount: mudancasNoPeriodo.length,
+      changesInPeriodWithoutGmPercent: mudancasNoPeriodo.length
+        ? Math.round((mudancasNoPeriodoSemGm.length / mudancasNoPeriodo.length) * 100)
+        : 0,
+      pendingByServiceMacro: gmPendingByServiceMacro,
+      pendingByServiceRanking: gmPendingByServiceRanking,
+    },
+    teamCapacity: {
+      unassignedBacklogCount: openUnassignedRequests.length,
+      unassignedBacklogPercent: backlogAtual.length
+        ? Math.round((openUnassignedRequests.length / backlogAtual.length) * 100)
+        : 0,
+      wipAssignedTotal: openAssignedRequests.length,
+      executorsWithWipCount: Object.keys(wipByExecutorMap).length,
+      wipByExecutor,
+      completedByExecutor,
+      unassignedOpenList,
+    },
+  };
+}
+
+function mapManagementListItem(request, usersById, nowIso) {
+  const base = mapRequestListItem(request, usersById);
+  const idadeHoras = Math.max(0, Math.round(hoursBetween(request.dataInclusao, nowIso)));
+  return {
+    ...base,
+    idadeHoras,
+    idadeDias: Math.floor(idadeHoras / 24),
+    atualizadoEm: request.dataAtualizacao,
+  };
+}
+
+export async function getManagementRequests(filters = {}, drilldown = { type: 'ALL' }) {
+  await ensureDbReady();
+  await delay();
+
+  const normalizedFilters = normalizeManagementFilters(filters);
+  const range = periodRangeFromDays(normalizedFilters.periodDays);
+  const nowIso = new Date().toISOString();
+  const usersById = await getUsersIndex();
+  const requests = await db.requests.toArray();
+
+  const list = requests
+    .filter((request) => matchesDashboardFilters(request, normalizedFilters))
+    .filter((request) => matchesManagementDrilldown(request, drilldown, { range, nowIso }))
+    .map((request) => mapManagementListItem(request, usersById, nowIso))
+    .sort((a, b) => new Date(b.dataAtualizacao).getTime() - new Date(a.dataAtualizacao).getTime());
+
+  return {
+    total: list.length,
+    items: list,
   };
 }
 
