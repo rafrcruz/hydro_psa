@@ -1005,6 +1005,41 @@ function buildDistributionFromGroups(groupMap, topN = 8) {
   };
 }
 
+function buildServiceMacroDistribution(list) {
+  const mainCategories = ['PIMS', 'SDCD', 'Redes', 'Elétrica', 'Automação'];
+  const counts = {
+    PIMS: 0,
+    SDCD: 0,
+    Redes: 0,
+    Elétrica: 0,
+    Automação: 0,
+    Outros: 0,
+  };
+
+  list.forEach(item => {
+    const macro = item.servicoMacro;
+    if (mainCategories.includes(macro)) {
+      counts[macro] += 1;
+    } else {
+      counts.Outros += 1;
+    }
+  });
+
+  const total = list.length;
+  const rows = [...mainCategories, 'Outros'].map(category => ({
+    key: category,
+    label: category,
+    count: counts[category],
+    percentual: total > 0 ? (counts[category] / total) * 100 : 0,
+    values: [category],
+  }));
+
+  return {
+    total,
+    rows,
+  };
+}
+
 function hoursBetween(startAt, endAt) {
   const start = new Date(startAt).getTime();
   const end = new Date(endAt).getTime();
@@ -1239,21 +1274,170 @@ export async function getManagementDashboardMetrics(filters = {}) {
   await ensureDbReady();
   await delay();
 
+  // 1. Normalizar filtros e preparar o ambiente
   const normalizedFilters = normalizeManagementFilters(filters);
   const range = periodRangeFromDays(normalizedFilters.periodDays);
-  const requests = await db.requests.toArray();
+  const nowIso = new Date().toISOString();
   const usersById = await getUsersIndex();
-  const scopedByDimensions = requests.filter((request) => matchesDashboardFilters(request, normalizedFilters));
+  const allRequests = await db.requests.toArray();
 
-  const entriesInPeriodRequests = scopedByDimensions.filter((request) => isDateInRange(request.dataInclusao, range));
-  const entradasNoPeriodo = entriesInPeriodRequests.length;
-  const concluidosNoPeriodo = scopedByDimensions.filter((request) => isDateInRange(resolveRequestClosedAt(request), range)).length;
-
-  const backlogAtual = scopedByDimensions.filter((request) => !FINAL_STATUS.includes(request.status));
-  const gmPendente = scopedByDimensions.filter((request) => !request.gmId);
-  const errosCriticosAbertos = scopedByDimensions.filter(
-    (request) => request.tipoDemanda === 'Erro Crítico' && !FINAL_STATUS.includes(request.status),
+  // 2. Aplicar filtros dimensionais PRIMEIRO para obter um conjunto de dados base
+  // Esta é a mudança principal: não filtramos por período aqui.
+  const dimensionallyFilteredRequests = allRequests.filter((request) =>
+    matchesDashboardFilters(request, normalizedFilters)
   );
+
+  // 3. Calcular Métricas "AGORA" (baseadas no estado atual)
+  const backlogNow = dimensionallyFilteredRequests.filter(
+    (request) => !FINAL_STATUS.includes(request.status)
+  );
+
+  const gmPendenteAgora = backlogNow.filter((request) => !request.gmId);
+  const semResponsavelAgora = backlogNow.filter((request) => !request.executorResponsavelId);
+  const erroCriticoEmAberto = backlogNow.filter(
+    (request) => request.tipoDemanda === 'Erro Crítico'
+  );
+  const atrasadosEmAberto = backlogNow.filter(
+    (request) =>
+      Number(request.slaHoras) > 0 &&
+      hoursBetween(request.dataInclusao, nowIso) > Number(request.slaHoras)
+  );
+
+  const metricsNow = {
+    backlogAtual: backlogNow.length,
+    gmPendenteAgora: gmPendenteAgora.length,
+    gmPendenteAgoraPercentual: backlogNow.length
+      ? Math.round((gmPendenteAgora.length / backlogNow.length) * 100)
+      : 0,
+    semResponsavelAgora: semResponsavelAgora.length,
+    semResponsavelAgoraPercentual: backlogNow.length
+      ? Math.round((semResponsavelAgora.length / backlogNow.length) * 100)
+      : 0,
+    erroCriticoEmAberto: erroCriticoEmAberto.length,
+    atrasadosEmAberto: atrasadosEmAberto.length,
+    atrasadosEmAbertoPercentual: backlogNow.length
+      ? Math.round((atrasadosEmAberto.length / backlogNow.length) * 100)
+      : 0,
+  };
+
+  // 4. Calcular Métricas "NO PERÍODO"
+  const entradasNoPeriodo = dimensionallyFilteredRequests.filter((request) =>
+    isDateInRange(request.dataInclusao, range)
+  );
+  const concluidosNoPeriodo = dimensionallyFilteredRequests.filter((request) =>
+    isDateInRange(resolveRequestClosedAt(request), range)
+  );
+
+  const concluidosDentroSla = concluidosNoPeriodo.filter(
+    (r) =>
+      Number(r.slaHoras) > 0 &&
+      hoursBetween(r.dataInclusao, resolveRequestClosedAt(r)) <= Number(r.slaHoras)
+  );
+  const concluidosForaSla = concluidosNoPeriodo.filter(
+    (r) =>
+      Number(r.slaHoras) > 0 &&
+      hoursBetween(r.dataInclusao, resolveRequestClosedAt(r)) > Number(r.slaHoras)
+  );
+
+  const metricsPeriod = {
+    entradasNoPeriodo: entradasNoPeriodo.length,
+    concluidosNoPeriodo: concluidosNoPeriodo.length,
+    concluidosDentroSla: concluidosDentroSla.length,
+    concluidosForaSla: concluidosForaSla.length,
+    taxaConclusaoDentroSla: concluidosNoPeriodo.length
+      ? Math.round((concluidosDentroSla.length / concluidosNoPeriodo.length) * 100)
+      : 0,
+  };
+
+  // 5. Métricas de Capacidade
+  const assignedBacklog = backlogNow.filter((r) => r.executorResponsavelId);
+  const unassignedBacklog = backlogNow.filter((r) => !r.executorResponsavelId);
+  const executors = (await db.users.where('role').equals('Executor').toArray());
+  const executorCount = executors.length > 0 ? executors.length : 1;
+
+  const wipByExecutorMap = assignedBacklog.reduce((acc, request) => {
+    const { executorResponsavelId } = request;
+    const executor = usersById[executorResponsavelId];
+    if (!acc[executorResponsavelId]) {
+      acc[executorResponsavelId] = {
+        label: executor?.name || executorResponsavelId,
+        count: 0,
+        onTime: 0,
+        overdue: 0,
+      };
+    }
+    acc[executorResponsavelId].count += 1;
+    const isOverdue = atrasadosEmAberto.some(r => r.id === request.id);
+    if (isOverdue) {
+      acc[executorResponsavelId].overdue += 1;
+    } else {
+      acc[executorResponsavelId].onTime += 1;
+    }
+    return acc;
+  }, {});
+
+  const wipByExecutor = Object.entries(wipByExecutorMap)
+    .map(([key, data]) => ({ ...data, key, values: [key] }))
+    .sort((a,b) => b.count - a.count || a.label.localeCompare(b.label));
+
+  const concludedByExecutorMap = concluidosNoPeriodo.reduce((acc, request) => {
+    const executorId = request.executorResponsavelId || 'UNASSIGNED';
+    const label = request.executorResponsavelId
+      ? (usersById[request.executorResponsavelId]?.name || request.executorResponsavelId)
+      : 'Nao atribuido';
+    if (!acc[executorId]) {
+      acc[executorId] = { label, count: 0, onTime: 0, overdue: 0 };
+    }
+    acc[executorId].count += 1;
+
+    const isOverdue = hoursBetween(request.dataInclusao, resolveRequestClosedAt(request)) > Number(request.slaHoras || 0);
+    if (isOverdue) {
+      acc[executorId].overdue += 1;
+    } else {
+      acc[executorId].onTime += 1;
+    }
+
+    return acc;
+  }, {});
+  
+  const completedByExecutor = Object.entries(concludedByExecutorMap)
+    .map(([key, data]) => ({ ...data, key, values: [key] }))
+    .sort((a,b) => b.count - a.count || a.label.localeCompare(b.label));
+  
+  const unassignedOpenList = unassignedBacklog
+    .map((request) => {
+      const ageHours = hoursBetween(request.dataInclusao, nowIso);
+      return {
+        id: request.id,
+        titulo: request.titulo,
+        area: request.area,
+        servicoMacro: request.servicoMacro,
+        status: request.status,
+        idadeDias: Math.max(0, Math.floor(ageHours / 24)),
+        gm: Boolean(request.gmId),
+      };
+    })
+    .sort((a, b) => b.idadeDias - a.idadeDias || a.id.localeCompare(b.id, 'pt-BR', { sensitivity: 'base' }))
+    .slice(0, 10);
+
+  const teamCapacity = {
+    totalBacklogCount: metricsNow.backlogAtual,
+    assignedBacklogCount: assignedBacklog.length,
+    unassignedBacklogCount: unassignedBacklog.length,
+    unassignedBacklogPercent: metricsNow.semResponsavelAgoraPercentual,
+    executorsWithWipCount: wipByExecutor.length,
+    wipByExecutor,
+    completedByExecutor,
+    unassignedOpenList,
+    averageCapacity: {
+      currentLoadPerExecutor: assignedBacklog.length / executorCount,
+      recentAverageLoadPerExecutor: null, // TODO: Implement simple historical average
+    }
+  };
+
+
+  // 6. Manter as análises de tendências e quebras existentes
+  const trendBaseRequests = dimensionallyFilteredRequests;
 
   const granularity = chooseGranularity(range.days);
   const buckets = buildTimeBuckets(range, granularity);
@@ -1267,9 +1451,9 @@ export async function getManagementDashboardMetrics(filters = {}) {
     concluidos: 0,
   }));
 
-  scopedByDimensions.forEach((request) => {
+  trendBaseRequests.forEach((request) => {
     const createdMs = new Date(request.dataInclusao).getTime();
-    if (!Number.isNaN(createdMs) && createdMs >= range.start.getTime() && createdMs <= range.end.getTime()) {
+    if (isDateInRange(request.dataInclusao, range)) {
       const bucketIndex = findBucketIndex(buckets, createdMs);
       if (bucketIndex >= 0) {
         entriesVsClosedSeries[bucketIndex].entradas += 1;
@@ -1277,18 +1461,18 @@ export async function getManagementDashboardMetrics(filters = {}) {
     }
 
     const closedAt = resolveRequestClosedAt(request);
-    const closedMs = new Date(closedAt).getTime();
-    if (!Number.isNaN(closedMs) && closedMs >= range.start.getTime() && closedMs <= range.end.getTime()) {
+    if (isDateInRange(closedAt, range)) {
+      const closedMs = new Date(closedAt).getTime();
       const bucketIndex = findBucketIndex(buckets, closedMs);
       if (bucketIndex >= 0) {
         entriesVsClosedSeries[bucketIndex].concluidos += 1;
       }
     }
   });
-
+  
   const backlogSeries = buckets.map((bucket) => {
     const pointTime = bucket.endExclusiveMs - 1;
-    const count = scopedByDimensions.filter((request) => {
+    const count = trendBaseRequests.filter((request) => {
       const createdMs = new Date(request.dataInclusao).getTime();
       if (Number.isNaN(createdMs) || createdMs > pointTime) {
         return false;
@@ -1299,10 +1483,7 @@ export async function getManagementDashboardMetrics(filters = {}) {
       }
 
       const closedMs = new Date(resolveRequestClosedAt(request)).getTime();
-      if (Number.isNaN(closedMs)) {
-        return true;
-      }
-      return closedMs > pointTime;
+      return Number.isNaN(closedMs) || closedMs > pointTime;
     }).length;
 
     return {
@@ -1310,35 +1491,24 @@ export async function getManagementDashboardMetrics(filters = {}) {
       label: bucket.label,
       startAt: bucket.startAt,
       endAt: bucket.endAt,
+      pointAt: new Date(pointTime).toISOString(),
       backlog: count,
     };
   });
 
-  const distributionByArea = buildDistribution(entriesInPeriodRequests, 'area', 8);
-  const distributionByService = buildDistribution(entriesInPeriodRequests, 'servicoMacro', 6);
+  // Base para distribuições: Entradas no Período
+  const distributionBaseRequests = entradasNoPeriodo;
+  const distributionByArea = buildDistribution(distributionBaseRequests, 'area', 8);
+  const distributionByService = buildServiceMacroDistribution(distributionBaseRequests);
 
-  const nowIso = new Date().toISOString();
-  const concludedInPeriodRequests = scopedByDimensions.filter((request) => isDateInRange(resolveRequestClosedAt(request), range));
-  const concludedInsideSla = concludedInPeriodRequests.filter((request) => {
-    const closedAt = resolveRequestClosedAt(request);
-    return hoursBetween(request.dataInclusao, closedAt) <= Number(request.slaHoras || 0);
-  });
-  const concludedOutsideSla = concludedInPeriodRequests.filter((request) => {
-    const closedAt = resolveRequestClosedAt(request);
-    return hoursBetween(request.dataInclusao, closedAt) > Number(request.slaHoras || 0);
-  });
-
-  const delayedOpenRequests = backlogAtual.filter(
-    (request) => hoursBetween(request.dataInclusao, nowIso) > Number(request.slaHoras || 0),
-  );
-
+  // Base para saúde do SLA: Backlog Atual e Concluídos no Período
   const openAgingBucketsBase = [
     { key: 'D0_2', label: '0-2 dias', minDays: 0, maxDays: 2, count: 0 },
     { key: 'D3_7', label: '3-7 dias', minDays: 3, maxDays: 7, count: 0 },
     { key: 'D8_14', label: '8-14 dias', minDays: 8, maxDays: 14, count: 0 },
     { key: 'D15_PLUS', label: '>14 dias', minDays: 15, maxDays: null, count: 0 },
   ];
-  const openAgingBuckets = backlogAtual.reduce((acc, request) => {
+  const openAgingBuckets = backlogNow.reduce((acc, request) => {
     const ageHours = Math.max(0, hoursBetween(request.dataInclusao, nowIso));
     const ageDays = Math.floor(ageHours / 24);
     const bucket = acc.find((item) => (
@@ -1350,7 +1520,8 @@ export async function getManagementDashboardMetrics(filters = {}) {
     return acc;
   }, openAgingBucketsBase);
 
-  const topDelayRequests = delayedOpenRequests
+  // Manter outras seções se necessário, adaptando a base
+  const topDelayRequests = atrasadosEmAberto
     .map((request) => {
       const ageHours = hoursBetween(request.dataInclusao, nowIso);
       const exceededHours = Math.max(0, ageHours - Number(request.slaHoras || 0));
@@ -1371,30 +1542,17 @@ export async function getManagementDashboardMetrics(filters = {}) {
     })
     .sort((a, b) => b.excedeuSlaHoras - a.excedeuSlaHoras || b.idadeHoras - a.idadeHoras)
     .slice(0, 5);
-
-  const gmPendingInBacklog = backlogAtual.filter((request) => !request.gmId);
-  const gmWithInBacklog = backlogAtual.filter((request) => request.gmId);
-  const mudancasNoPeriodo = entriesInPeriodRequests.filter((request) => request.tipoDemanda === 'Mudança');
-  const mudancasNoPeriodoSemGm = mudancasNoPeriodo.filter((request) => !request.gmId);
-  const gmPendingByServiceMacro = buildDistribution(gmPendingInBacklog, 'servicoMacro', 6);
-  const backlogByServiceMap = SERVICE_MACROS.reduce((acc, macro) => ({ ...acc, [macro]: 0 }), {});
-  const gmPendingByServiceMap = SERVICE_MACROS.reduce((acc, macro) => ({ ...acc, [macro]: 0 }), {});
-  backlogAtual.forEach((request) => {
-    const macro = SERVICE_MACROS.includes(request.servicoMacro) ? request.servicoMacro : 'Outros';
-    backlogByServiceMap[macro] += 1;
-    if (!request.gmId) {
-      gmPendingByServiceMap[macro] += 1;
-    }
-  });
+  
+  const gmPendingInBacklog = backlogNow.filter((request) => !request.gmId);
   const gmPendingByServiceRanking = SERVICE_MACROS.map((macro) => {
-    const pendingCount = gmPendingByServiceMap[macro];
-    const backlogCount = backlogByServiceMap[macro];
+    const pendingInService = gmPendingInBacklog.filter(r => r.servicoMacro === macro);
+    const backlogInService = backlogNow.filter(r => r.servicoMacro === macro);
     return {
       key: macro,
       label: macro,
-      count: pendingCount,
-      backlogCount,
-      pendingPercentOfServiceBacklog: backlogCount ? Math.round((pendingCount / backlogCount) * 100) : 0,
+      count: pendingInService.length,
+      backlogCount: backlogInService.length,
+      pendingPercentOfServiceBacklog: backlogInService.length ? Math.round((pendingInService.length / backlogInService.length) * 100) : 0,
     };
   })
     .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, 'pt-BR', { sensitivity: 'base' }))
@@ -1404,89 +1562,25 @@ export async function getManagementDashboardMetrics(filters = {}) {
       values: [row.key],
     }));
 
-  const openAssignedRequests = backlogAtual.filter((request) => Boolean(request.executorResponsavelId));
-  const openUnassignedRequests = backlogAtual.filter((request) => !request.executorResponsavelId);
-  const wipByExecutorMap = openAssignedRequests.reduce((acc, request) => {
-    const executorId = request.executorResponsavelId;
-    const executor = usersById[executorId];
-    if (!acc[executorId]) {
-      acc[executorId] = {
-        label: executor?.name || executorId,
-        count: 0,
-        delayedCount: 0,
-      };
-    }
-    acc[executorId].count += 1;
-
-    // Simulate some on-time requests for demo purposes
-    const requestSeq = parseRequestSeq(request.id);
-    const isArtificiallyOnTime = requestSeq % 2 === 0;
-    const isDelayed = hoursBetween(request.dataInclusao, nowIso) > Number(request.slaHoras || 0);
-
-    if (isDelayed && !isArtificiallyOnTime) {
-      acc[executorId].delayedCount += 1;
-    }
-    return acc;
-  }, {});
-
-  const concludedByExecutorMap = concludedInPeriodRequests.reduce((acc, request) => {
-    const executorId = request.executorResponsavelId || 'UNASSIGNED';
-    const label = request.executorResponsavelId
-      ? (usersById[request.executorResponsavelId]?.name || request.executorResponsavelId)
-      : 'Nao atribuido';
-    if (!acc[executorId]) {
-      acc[executorId] = { label, count: 0, delayedCount: 0 };
-    }
-    acc[executorId].count += 1;
-
-    const isDelayed = hoursBetween(request.dataInclusao, resolveRequestClosedAt(request)) > Number(request.slaHoras || 0);
-    if (isDelayed) {
-      acc[executorId].delayedCount += 1;
-    }
-
-    return acc;
-  }, {});
-
-  const wipByExecutor = buildDistributionFromGroups(wipByExecutorMap, 8);
-  const completedByExecutor = buildDistributionFromGroups(concludedByExecutorMap, 8);
-
-  const unassignedOpenList = openUnassignedRequests
-    .map((request) => {
-      const ageHours = hoursBetween(request.dataInclusao, nowIso);
-      return {
-        id: request.id,
-        titulo: request.titulo,
-        area: request.area,
-        servicoMacro: request.servicoMacro,
-        status: request.status,
-        idadeDias: Math.max(0, Math.floor(ageHours / 24)),
-        gm: Boolean(request.gmId),
-      };
-    })
-    .sort((a, b) => b.idadeDias - a.idadeDias || a.id.localeCompare(b.id, 'pt-BR', { sensitivity: 'base' }))
-    .slice(0, 10);
-
+  // 7. Montar e retornar o objeto final
   return {
     period: {
       days: range.days,
       startAt: range.start.toISOString(),
       endAt: range.end.toISOString(),
     },
-    cards: {
-      entradasNoPeriodo,
-      concluidosNoPeriodo,
-      backlogAtual: backlogAtual.length,
-      gmPendente: gmPendente.length,
-      gmPendentePercentualSobreBacklog: backlogAtual.length
-        ? Math.round((gmPendente.length / backlogAtual.length) * 100)
-        : 0,
-      errosCriticosAbertos: errosCriticosAbertos.length,
-    },
+    metricsPeriod,
+    metricsNow,
+    teamCapacity,
     trace: {
-      totalComFiltrosGlobais: scopedByDimensions.length,
-      totalNoPeriodo: entradasNoPeriodo,
+      totalGeral: allRequests.length,
+      totalComFiltrosDimensionais: dimensionallyFilteredRequests.length,
+      backlogAtual: backlogNow.length,
+      entradasNoPeriodo: entradasNoPeriodo.length,
     },
     trends: {
+      base: 'FILTROS_DIMENSIONAIS',
+      baseLabel: 'Base: Chamados filtrados (sem filtro de período)',
       granularity,
       granularityLabel: granularityLabel(granularity),
       entriesVsClosed: entriesVsClosedSeries,
@@ -1494,79 +1588,49 @@ export async function getManagementDashboardMetrics(filters = {}) {
     },
     distributions: {
       base: 'ENTRADAS_PERIODO',
-      baseLabel: 'Base: Entradas no periodo',
+      baseLabel: 'Base: Entradas no período',
       byArea: distributionByArea,
       byServiceMacro: distributionByService,
     },
     slaHealth: {
-      concludedInPeriodTotal: concludedInPeriodRequests.length,
-      concludedWithinSlaCount: concludedInsideSla.length,
-      concludedWithinSlaPercent: concludedInPeriodRequests.length
-        ? Math.round((concludedInsideSla.length / concludedInPeriodRequests.length) * 100)
-        : 0,
-      concludedOutsideSlaCount: concludedOutsideSla.length,
-      delayedOpenCount: delayedOpenRequests.length,
-      delayedOpenPercentOfBacklog: backlogAtual.length
-        ? Math.round((delayedOpenRequests.length / backlogAtual.length) * 100)
-        : 0,
+      concludedInPeriodTotal: concluidosNoPeriodo.length,
+      concludedWithinSlaCount: concluidosDentroSla.length,
+      concludedWithinSlaPercent: metricsPeriod.taxaConclusaoDentroSla,
+      concludedOutsideSlaCount: concluidosForaSla.length,
+      delayedOpenCount: metricsNow.atrasadosEmAberto,
+      delayedOpenPercentOfBacklog: metricsNow.atrasadosEmAbertoPercentual,
       withinVsOutsideDistribution: {
-        total: concludedInPeriodRequests.length,
+        total: concluidosNoPeriodo.length,
         rows: [
           {
             key: 'WITHIN_SLA',
             label: 'Dentro do SLA',
-            count: concludedInsideSla.length,
-            percentual: concludedInPeriodRequests.length
-              ? (concludedInsideSla.length / concludedInPeriodRequests.length) * 100
-              : 0,
+            count: concluidosDentroSla.length,
+            percentual: concluidosNoPeriodo.length ? (concluidosDentroSla.length / concluidosNoPeriodo.length) * 100 : 0,
           },
           {
             key: 'OUTSIDE_SLA',
             label: 'Fora do SLA',
-            count: concludedOutsideSla.length,
-            percentual: concludedInPeriodRequests.length
-              ? (concludedOutsideSla.length / concludedInPeriodRequests.length) * 100
-              : 0,
+            count: concluidosForaSla.length,
+            percentual: concluidosNoPeriodo.length ? (concluidosForaSla.length / concluidosNoPeriodo.length) * 100 : 0,
           },
         ],
       },
       openAgingBuckets: {
-        total: backlogAtual.length,
+        total: backlogNow.length,
         rows: openAgingBuckets.map((row) => ({
-          key: row.key,
-          label: row.label,
-          count: row.count,
-          percentual: backlogAtual.length ? (row.count / backlogAtual.length) * 100 : 0,
+          ...row,
+          percentual: backlogNow.length ? (row.count / backlogNow.length) * 100 : 0,
         })),
       },
       topDelays: topDelayRequests,
     },
     gmGovernance: {
       pendingCount: gmPendingInBacklog.length,
-      pendingPercentOfBacklog: backlogAtual.length
-        ? Math.round((gmPendingInBacklog.length / backlogAtual.length) * 100)
-        : 0,
-      withGmCount: gmWithInBacklog.length,
-      withGmPercentOfBacklog: backlogAtual.length
-        ? Math.round((gmWithInBacklog.length / backlogAtual.length) * 100)
-        : 0,
-      changesInPeriodCount: mudancasNoPeriodo.length,
-      changesInPeriodWithoutGmPercent: mudancasNoPeriodo.length
-        ? Math.round((mudancasNoPeriodoSemGm.length / mudancasNoPeriodo.length) * 100)
-        : 0,
-      pendingByServiceMacro: gmPendingByServiceMacro,
+      pendingPercentOfBacklog: metricsNow.gmPendenteAgoraPercentual,
+      withGmCount: backlogNow.length - gmPendingInBacklog.length,
+      withGmPercentOfBacklog: 100 - metricsNow.gmPendenteAgoraPercentual,
       pendingByServiceRanking: gmPendingByServiceRanking,
-    },
-    teamCapacity: {
-      unassignedBacklogCount: openUnassignedRequests.length,
-      unassignedBacklogPercent: backlogAtual.length
-        ? Math.round((openUnassignedRequests.length / backlogAtual.length) * 100)
-        : 0,
-      wipAssignedTotal: openAssignedRequests.length,
-      executorsWithWipCount: Object.keys(wipByExecutorMap).length,
-      wipByExecutor,
-      completedByExecutor,
-      unassignedOpenList,
     },
   };
 }

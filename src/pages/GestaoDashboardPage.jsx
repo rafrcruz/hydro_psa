@@ -249,7 +249,7 @@ export default function GestaoDashboardPage() {
     const lastIndex = merged.length - 1;
     merged[lastIndex] = {
       ...merged[lastIndex],
-      backlog: Number(metrics.cards.backlogAtual || 0),
+      backlog: Number(metrics.metricsNow.backlogAtual || 0),
     };
     return merged.some((item) => item.backlog > 0 || item.concluidos > 0) ? merged : [];
   }, [metrics]);
@@ -512,295 +512,347 @@ export default function GestaoDashboardPage() {
         <>
           {activeTab === 'geral' ? (
             <section className="space-y-4">
+              {/* 1. KPIs (Visão Geral) */}
               <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
-                <StatCard compact title="Entradas no período" value={formatCountKpi(metrics.cards?.entradasNoPeriodo)} hint="no período" onClick={() => goToDrilldown({ type: 'ENTRADAS_PERIODO' })} />
-                <StatCard compact title="Concluídos no período" value={formatCountKpi(metrics.cards?.concluidosNoPeriodo)} hint="no período" onClick={() => goToDrilldown({ type: 'CONCLUIDOS_PERIODO' })} />
-                <StatCard compact title="Backlog atual" value={formatCountKpi(metrics.cards?.backlogAtual)} hint="agora" onClick={() => goToDrilldown({ type: 'BACKLOG_ATUAL' })} />
-                <StatCard compact title="Atrasados em aberto" value={formatCountKpi(metrics.slaHealth?.delayedOpenCount)} hint="agora" onClick={() => goToDrilldown({ type: 'SLA_ATRASADOS_ABERTOS' })} />
-                <StatCard compact title="% SLA cumprido" value={formatPercentKpi(metrics.slaHealth?.concludedWithinSlaPercent)} hint="no período" onClick={() => goToDrilldown({ type: 'SLA_DENTRO' })} />
-                <StatCard compact title="GM pendente" value={formatCountKpi(metrics.gmGovernance?.pendingCount)} hint={typeof metrics.gmGovernance?.pendingPercentOfBacklog === 'number' ? `${metrics.gmGovernance.pendingPercentOfBacklog}% do backlog` : 'indisponível'} onClick={() => goToDrilldown({ type: 'GM_BACKLOG_PENDENTE' })} />
-                <StatCard compact title="Erro crítico em aberto" value={formatCountKpi(metrics.cards?.errosCriticosAbertos)} hint="agora" onClick={() => goToDrilldown({ type: 'ERRO_CRITICO_ABERTO' })} />
-                <StatCard compact title="Sem responsável" value={formatCountKpi(metrics.teamCapacity?.unassignedBacklogCount)} hint="em aberto agora" onClick={() => goToDrilldown({ type: 'CAPACITY_SEM_RESPONSAVEL' })} />
+                <StatCard compact title="Entradas no período" value={formatCountKpi(metrics.metricsPeriod?.entradasNoPeriodo)} hint="no período" onClick={() => goToDrilldown({ type: 'ENTRADAS_PERIODO' })} />
+                <StatCard compact title="Concluídos no período" value={formatCountKpi(metrics.metricsPeriod?.concluidosNoPeriodo)} hint="no período" onClick={() => goToDrilldown({ type: 'CONCLUIDOS_PERIODO' })} />
+                <StatCard compact title="Backlog atual" value={formatCountKpi(metrics.metricsNow?.backlogAtual)} hint="agora" onClick={() => goToDrilldown({ type: 'BACKLOG_ATUAL' })} />
+                <StatCard compact title="Atrasados em aberto" value={formatCountKpi(metrics.metricsNow?.atrasadosEmAberto)} hint="agora" onClick={() => goToDrilldown({ type: 'SLA_ATRASADOS_ABERTOS' })} />
+                <StatCard compact title="% SLA cumprido" value={formatPercentKpi(metrics.metricsPeriod?.taxaConclusaoDentroSla)} hint="no período" onClick={() => goToDrilldown({ type: 'SLA_DENTRO' })} />
+                <StatCard compact title="GM pendente" value={formatCountKpi(metrics.metricsNow?.gmPendenteAgora)} hint={typeof metrics.metricsNow?.gmPendenteAgoraPercentual === 'number' ? `${metrics.metricsNow.gmPendenteAgoraPercentual}% do backlog` : 'indisponível'} onClick={() => goToDrilldown({ type: 'GM_BACKLOG_PENDENTE' })} />
+                <StatCard compact title="Erro crítico em aberto" value={formatCountKpi(metrics.metricsNow?.erroCriticoEmAberto)} hint="agora" onClick={() => goToDrilldown({ type: 'ERRO_CRITICO_ABERTO' })} />
+                <StatCard compact title="Sem responsável" value={formatCountKpi(metrics.metricsNow?.semResponsavelAgora)} hint="em aberto agora" onClick={() => goToDrilldown({ type: 'CAPACITY_SEM_RESPONSAVEL' })} />
               </div>
 
-              {metrics.trace.totalComFiltrosGlobais === 0 ? (
-                <article className="card p-4">
-                  <h3 className="text-lg">Sem dados para o período e filtros atuais</h3>
-                  <p className="mt-2 text-sm text-aluminium">Ajuste o recorte ou limpe os filtros para visualizar indicadores.</p>
-                </article>
-              ) : null}
-
-              <div className="grid gap-4 lg:grid-cols-2">
-                <article className="card p-4 lg:col-span-2">
-                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                    <div>
-                      <h3 className="text-lg">Evolução do backlog (burndown)</h3>
-                      <p className="mt-1 text-xs text-aluminium">Backlog em aberto e concluídos por intervalo</p>
-                    </div>
-                    <p className="text-xs text-aluminium">Slot A · visão executiva compacta</p>
+              {/* 2. Gráfico Principal (Burndown) */}
+              <article className="card p-4">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h3 className="text-lg">Evolução do backlog e vazão</h3>
+                    <p className="mt-1 text-xs text-aluminium">Backlog em aberto (linha) e concluídos por intervalo (barras)</p>
                   </div>
-                  {metrics.trace.totalComFiltrosGlobais === 0 ? (
-                    <p className="text-sm text-aluminium">Sem dados para o período/filtros.</p>
-                  ) : (
-                    <BurndownBacklogChart
-                      data={burndownSeries}
-                      granularityLabel={metrics.trends.granularityLabel}
-                      emptyLabel="Sem dados para o período/filtros."
-                      onIntervalClick={(row) => goToDrilldown({ type: 'TREND_ENTRADAS', startAt: row.startAt, endAt: row.endAt })}
-                    />
-                  )}
-                </article>
-
+                </div>
+                {metrics.trace.totalComFiltrosDimensionais === 0 ? (
+                  <p className="text-sm text-aluminium">Sem dados para o período e filtros atuais.</p>
+                ) : (
+                  <BurndownBacklogChart
+                    data={burndownSeries}
+                    granularityLabel={metrics.trends.granularityLabel}
+                    emptyLabel="Sem dados para o período/filtros."
+                    onIntervalClick={(row) => goToDrilldown({ type: 'TREND_ENTRADAS', startAt: row.startAt, endAt: row.endAt })}
+                  />
+                )}
+              </article>
+              
+              <div className="grid gap-4 lg:grid-cols-2">
+                {/* 3. Donut SLA */}
                 <CompactDonutCard
-                  title="SLA (concluídos no período)"
-                  subtitle="Dentro vs fora do SLA"
-                  valueLabel={formatPercentKpi(metrics.slaHealth?.concludedWithinSlaPercent)}
-                  valueHint="percentual dentro do SLA"
+                  title="SLA de Concluídos"
+                  subtitle="Dentro vs. fora do SLA no período"
+                  valueLabel={formatPercentKpi(metrics.metricsPeriod.taxaConclusaoDentroSla)}
+                  valueHint="dentro do SLA"
                   contextLabel="Base: concluídos no período"
                   emptyLabel="Sem concluídos no período."
                   items={[
                     {
                       key: 'WITHIN_SLA',
                       label: 'Dentro do SLA',
-                      value: Number(metrics.slaHealth?.concludedWithinSlaCount || 0),
-                      percent: Number(metrics.slaHealth?.concludedWithinSlaPercent || 0),
+                      value: metrics.metricsPeriod.concluidosDentroSla,
+                      percent: metrics.metricsPeriod.taxaConclusaoDentroSla,
                       color: '#27ae60',
                     },
                     {
                       key: 'OUTSIDE_SLA',
                       label: 'Fora do SLA',
-                      value: Number(metrics.slaHealth?.concludedOutsideSlaCount || 0),
-                      percent: Math.max(0, 100 - Number(metrics.slaHealth?.concludedWithinSlaPercent || 0)),
+                      value: metrics.metricsPeriod.concluidosForaSla,
+                      percent: 100 - metrics.metricsPeriod.taxaConclusaoDentroSla,
                       color: '#d35454',
                     },
                   ]}
                   onSegmentClick={(segment) => goToDrilldown({ type: segment.key === 'WITHIN_SLA' ? 'SLA_DENTRO' : 'SLA_FORA' })}
                 />
 
+                {/* 4. Donut GM */}
                 <CompactDonutCard
-                  title="GM (backlog atual)"
-                  subtitle="Com GM vs GM pendente"
-                  valueLabel={`${formatCountKpi(metrics.gmGovernance?.pendingCount)}${typeof metrics.gmGovernance?.pendingPercentOfBacklog === 'number' ? ` (${metrics.gmGovernance.pendingPercentOfBacklog}%)` : ''}`}
-                  valueHint="GM pendente no backlog"
+                  title="Governança de GM"
+                  subtitle="Com GM vs. pendente no backlog atual"
+                  valueLabel={`${formatCountKpi(metrics.metricsNow.gmPendenteAgora)} (${formatPercentKpi(metrics.metricsNow.gmPendenteAgoraPercentual)})`}
+                  valueHint="GM pendente"
                   contextLabel="Base: backlog atual"
                   emptyLabel="Sem backlog no recorte."
                   items={[
                     {
                       key: 'WITH_GM',
                       label: 'Com GM',
-                      value: Number(metrics.gmGovernance?.withGmCount || 0),
-                      percent: Number(metrics.gmGovernance?.withGmPercentOfBacklog || 0),
+                      value: metrics.metricsNow.backlogAtual - metrics.metricsNow.gmPendenteAgora,
+                      percent: 100 - metrics.metricsNow.gmPendenteAgoraPercentual,
                       color: '#2f80ed',
                     },
                     {
                       key: 'PENDING_GM',
                       label: 'GM pendente',
-                      value: Number(metrics.gmGovernance?.pendingCount || 0),
-                      percent: Number(metrics.gmGovernance?.pendingPercentOfBacklog || 0),
+                      value: metrics.metricsNow.gmPendenteAgora,
+                      percent: metrics.metricsNow.gmPendenteAgoraPercentual,
+                      color: '#a6403a',
+                    },
+                  ]}
+                  onSegmentClick={(segment) => goToDrilldown({ type: segment.key === 'WITH_GM' ? 'GM_BACKLOG_COM' : 'GM_BACKLOG_PENDENTE' })}
+                />
+              </div>
+
+              {/* 5. Top Atrasos */}
+              <article className="card p-4">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h3 className="text-lg">Ação Rápida: Top 5 Atrasos em Aberto</h3>
+                    <p className="mt-1 text-xs text-aluminium">Itens com maior estouro de SLA ou idade</p>
+                  </div>
+                  <button type="button" className="btn btn-secondary btn-compact" onClick={() => goToDrilldown({ type: 'SLA_ATRASADOS_ABERTOS' })}>
+                    Ver lista completa
+                  </button>
+                </div>
+                {metrics.slaHealth?.topDelays?.length > 0 ? (
+                  <div className="overflow-auto">
+                    <table className="min-w-full text-sm">
+                      <thead className="text-left text-xs uppercase tracking-wide text-aluminium">
+                        <tr>
+                          <th className="py-2 pr-3">ID</th>
+                          <th className="py-2 pr-3">Título</th>
+                          <th className="py-2 pr-3">Responsável</th>
+                          <th className="py-2 pr-3">Idade</th>
+                          <th className="py-2 pr-3">Estouro SLA</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {metrics.slaHealth.topDelays.map((row) => (
+                          <tr key={row.id} className="border-t border-light-gray text-mid-gray">
+                            <td className="py-2 pr-3 font-semibold text-hydro-blue">
+                              <button type="button" className="hover:underline" onClick={() => goToDetail(row.id)}>{row.id}</button>
+                            </td>
+                            <td className="py-2 pr-3">{row.titulo}</td>
+                            <td className="py-2 pr-3">{row.responsavel || 'Sem responsável'}</td>
+                            <td className="py-2 pr-3">{row.idadeLabel || '-'}</td>
+                            <td className="py-2 pr-3 text-bauxite">{row.excedeuSlaLabel || '-'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p className="text-sm text-aluminium">Nenhum atraso no recorte.</p>
+                )}
+              </article>
+            </section>
+          ) : null}
+
+          {activeTab === 'distribuicoes' ? (
+            <section className="space-y-4">
+              <SectionTitle title="Distribuições" subtitle="Composição dos chamados que entraram no período selecionado." />
+              <div className="grid gap-4 lg:grid-cols-2">
+                <ParetoAreaChart
+                  title="Distribuição por Área (Pareto)"
+                  rows={metrics.distributions.byArea.rows}
+                  total={metrics.distributions.byArea.total}
+                  baseLabel={distributionBaseLabel}
+                  emptyLabel="Sem dados para o recorte."
+                  onBarClick={(row) => goToDrilldown({ type: 'DISTRIBUTION_AREA', values: row.values || [row.label] })}
+                />
+                <ServiceMacroDonut
+                  title="Distribuição por Serviço Macro"
+                  rows={metrics.distributions.byServiceMacro.rows}
+                  total={metrics.distributions.byServiceMacro.total}
+                  baseLabel={distributionBaseLabel}
+                  emptyLabel="Sem dados para o recorte."
+                  onSliceClick={(segment) => goToDrilldown({ type: 'DISTRIBUTION_SERVICO', values: [segment.key] })}
+                />
+              </div>
+            </section>
+          ) : null}
+
+          {activeTab === 'sla-gm' ? (
+            <section className="space-y-4">
+              <section className="space-y-3">
+                <SectionTitle title="SLA & Governança de Mudanças" subtitle="Saúde dos concluídos no período e governança do backlog atual." />
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  <StatCard title="% Concluídos dentro do SLA" value={formatPercentKpi(metrics.metricsPeriod.taxaConclusaoDentroSla)} hint="no período" onClick={() => goToDrilldown({ type: 'SLA_DENTRO' })} />
+                  <StatCard title="Concluídos fora do SLA" value={formatCountKpi(metrics.metricsPeriod.concluidosForaSla)} hint="no período" onClick={() => goToDrilldown({ type: 'SLA_FORA' })} />
+                  <StatCard title="Atrasados em aberto" value={formatCountKpi(metrics.metricsNow.atrasadosEmAberto)} hint="agora" onClick={() => goToDrilldown({ type: 'SLA_ATRASADOS_ABERTOS' })} />
+                  <StatCard title="GM pendente" value={formatCountKpi(metrics.metricsNow.gmPendenteAgora)} hint={`${formatPercentKpi(metrics.metricsNow.gmPendenteAgoraPercentual)} do backlog`} onClick={() => goToDrilldown({ type: 'GM_BACKLOG_PENDENTE' })} />
+                </div>
+              </section>
+
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                <CompactDonutCard
+                  title="SLA de Concluídos"
+                  subtitle="Dentro vs. fora do SLA no período"
+                  valueLabel={formatPercentKpi(metrics.metricsPeriod.taxaConclusaoDentroSla)}
+                  valueHint="dentro do SLA"
+                  contextLabel="Base: concluídos no período"
+                  emptyLabel="Sem concluídos no período."
+                  items={[
+                    {
+                      key: 'WITHIN_SLA',
+                      label: 'Dentro do SLA',
+                      value: metrics.metricsPeriod.concluidosDentroSla,
+                      percent: metrics.metricsPeriod.taxaConclusaoDentroSla,
+                      color: '#27ae60',
+                    },
+                    {
+                      key: 'OUTSIDE_SLA',
+                      label: 'Fora do SLA',
+                      value: metrics.metricsPeriod.concluidosForaSla,
+                      percent: 100 - metrics.metricsPeriod.taxaConclusaoDentroSla,
+                      color: '#d35454',
+                    },
+                  ]}
+                  onSegmentClick={(segment) => goToDrilldown({ type: segment.key === 'WITHIN_SLA' ? 'SLA_DENTRO' : 'SLA_FORA' })}
+                />
+
+                <AgingBucketsBars
+                  title="Envelhecimento do Backlog"
+                  subtitle="Faixas de idade dos chamados em aberto"
+                  rows={metrics.slaHealth.openAgingBuckets.rows}
+                  total={metrics.slaHealth.openAgingBuckets.total}
+                  emptyLabel="Sem backlog no recorte."
+                  onBucketClick={(bucket) => goToDrilldown({ type: 'SLA_AGING_BUCKET', bucketKey: bucket.key })}
+                />
+
+                <CompactDonutCard
+                  title="Governança de GM (Backlog)"
+                  subtitle="Com GM vs. pendente no backlog atual"
+                  valueLabel={`${formatCountKpi(metrics.metricsNow.gmPendenteAgora)} (${formatPercentKpi(metrics.metricsNow.gmPendenteAgoraPercentual)})`}
+                  valueHint="GM pendente"
+                  contextLabel="Base: backlog atual"
+                  emptyLabel="Sem backlog no recorte."
+                  items={[
+                    {
+                      key: 'WITH_GM',
+                      label: 'Com GM',
+                      value: metrics.metricsNow.backlogAtual - metrics.metricsNow.gmPendenteAgora,
+                      percent: 100 - metrics.metricsNow.gmPendenteAgoraPercentual,
+                      color: '#2f80ed',
+                    },
+                    {
+                      key: 'PENDING_GM',
+                      label: 'GM pendente',
+                      value: metrics.metricsNow.gmPendenteAgora,
+                      percent: metrics.metricsNow.gmPendenteAgoraPercentual,
                       color: '#a6403a',
                     },
                   ]}
                   onSegmentClick={(segment) => goToDrilldown({ type: segment.key === 'WITH_GM' ? 'GM_BACKLOG_COM' : 'GM_BACKLOG_PENDENTE' })}
                 />
 
-                <article className="card p-4 lg:col-span-2">
-                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                    <div>
-                      <h3 className="text-lg">Atenção: Top atrasos</h3>
-                      <p className="mt-1 text-xs text-aluminium">Top 5 por maior estouro de SLA (em aberto)</p>
-                    </div>
-                    <button type="button" className="btn btn-secondary btn-compact" onClick={() => goToDrilldown({ type: 'SLA_ATRASADOS_ABERTOS' })}>
-                      Ver lista completa
-                    </button>
-                  </div>
-                  {metrics.slaHealth?.topDelays?.length ? (
-                    <div className="max-h-72 overflow-auto">
-                      <table className="min-w-full text-sm">
-                        <thead className="text-left text-xs uppercase tracking-wide text-aluminium">
-                          <tr>
-                            <th className="py-2 pr-3">ID</th>
-                            <th className="py-2 pr-3">Título</th>
-                            <th className="py-2 pr-3">Área</th>
-                            <th className="py-2 pr-3">Serviço</th>
-                            <th className="py-2 pr-3">Status</th>
-                            <th className="py-2 pr-3">Responsável</th>
-                            <th className="py-2 pr-3">Idade</th>
-                            <th className="py-2 pr-3">Estouro SLA</th>
-                            <th className="py-2 pr-1">GM</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {metrics.slaHealth.topDelays.slice(0, 5).map((row) => (
-                            <tr key={row.id} className="border-t border-light-gray text-mid-gray">
-                              <td className="py-2 pr-3 font-semibold text-hydro-blue">
-                                <button type="button" className="hover:underline" onClick={() => goToDetail(row.id)}>{row.id}</button>
-                              </td>
-                              <td className="py-2 pr-3">{row.titulo}</td>
-                              <td className="py-2 pr-3">{row.area}</td>
-                              <td className="py-2 pr-3">{row.servicoMacro}</td>
-                              <td className="py-2 pr-3">{row.status}</td>
-                              <td className="py-2 pr-3">{row.responsavel || 'Sem responsável'}</td>
-                              <td className="py-2 pr-3">{row.idadeLabel || '-'}</td>
-                              <td className="py-2 pr-3 text-bauxite">{row.excedeuSlaLabel || '-'}</td>
-                              <td className="py-2 pr-1">{row.gm ? 'Com GM' : 'GM pendente'}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  ) : (
-                    <p className="text-sm text-aluminium">Sem itens para o recorte atual.</p>
-                  )}
-                </article>
+                <DistributionBarList
+                  title="Ranking: GM Pendente por Serviço"
+                  subtitle="Volume de GMs pendentes por serviço macro no backlog atual"
+                  total={metrics.gmGovernance.pendingCount}
+                  rows={metrics.gmGovernance.pendingByServiceRanking}
+                  emptyLabel="Sem GMs pendentes no recorte."
+                  getBarColor={() => '#a6403a'}
+                  formatValueLabel={(row) => `${row.count} | ${row.pendingPercentOfServiceBacklog}% do backlog do serviço`}
+                  onRowClick={(row) => goToDrilldown({ type: 'GM_PENDENTE_SERVICO', values: row.values || [row.label] })}
+                />
               </div>
             </section>
           ) : null}
 
-          {activeTab === 'distribuicoes' ? (
-            <section className="grid gap-4 lg:grid-cols-3">
-              <ParetoAreaChart
-                rows={metrics.distributions.byArea.rows}
-                total={metrics.distributions.byArea.total}
-                baseLabel={distributionBaseLabel}
-                selectedAreaLabel={selectedAreaLabel}
-                emptyLabel="Sem dados para o recorte."
-                onBarClick={(row) => goToDrilldown({ type: 'DISTRIBUTION_AREA', values: row.values || [row.label] })}
-              />
-              <ServiceMacroDonut
-                rows={metrics.distributions.byServiceMacro.rows}
-                total={metrics.distributions.byServiceMacro.total}
-                baseLabel={distributionBaseLabel}
-                emptyLabel="Sem dados para o recorte."
-                onSliceClick={(segment) => goToDrilldown({ type: 'DISTRIBUTION_SERVICO', values: [segment.key] })}
-              />
-            </section>
-          ) : null}
-
-          {activeTab === 'sla-gm' ? (
-            <section className="grid gap-4 lg:grid-cols-2">
-              <section className="space-y-3 lg:col-span-2">
-                <SectionTitle title="SLA & GM" subtitle="Saúde dos concluídos no período e governança do backlog atual." />
-                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                  <StatCard title="% Concluídos dentro do SLA" value={`${metrics.slaHealth.concludedWithinSlaPercent}%`} hint="no período" onClick={() => goToDrilldown({ type: 'SLA_DENTRO' })} />
-                  <StatCard title="Concluídos fora do SLA" value={metrics.slaHealth.concludedOutsideSlaCount} hint="no período" onClick={() => goToDrilldown({ type: 'SLA_FORA' })} />
-                  <StatCard title="Atrasados em aberto" value={metrics.slaHealth.delayedOpenCount} hint="agora" onClick={() => goToDrilldown({ type: 'SLA_ATRASADOS_ABERTOS' })} />
-                  <StatCard title="GM pendente" value={metrics.gmGovernance.pendingCount} hint={`${metrics.gmGovernance.pendingPercentOfBacklog}% do backlog`} onClick={() => goToDrilldown({ type: 'GM_BACKLOG_PENDENTE' })} />
-                </div>
-              </section>
-
-              <CompactDonutCard
-                title="SLA (concluídos no período)"
-                subtitle="Dentro vs fora do SLA"
-                valueLabel={`${metrics.slaHealth.concludedWithinSlaPercent}%`}
-                valueHint="percentual dentro do SLA"
-                contextLabel="Base: concluídos no período"
-                emptyLabel="Sem concluídos no período."
-                items={[
-                  {
-                    key: 'WITHIN_SLA',
-                    label: 'Dentro do SLA',
-                    value: Number(metrics.slaHealth.concludedWithinSlaCount || 0),
-                    percent: Number(metrics.slaHealth.concludedWithinSlaPercent || 0),
-                    color: '#27ae60',
-                  },
-                  {
-                    key: 'OUTSIDE_SLA',
-                    label: 'Fora do SLA',
-                    value: Number(metrics.slaHealth.concludedOutsideSlaCount || 0),
-                    percent: Math.max(0, 100 - Number(metrics.slaHealth.concludedWithinSlaPercent || 0)),
-                    color: '#d35454',
-                  },
-                ]}
-                onSegmentClick={(segment) => goToDrilldown({ type: segment.key === 'WITHIN_SLA' ? 'SLA_DENTRO' : 'SLA_FORA' })}
-              />
-
-              <AgingBucketsBars
-                title="Aging dos abertos"
-                subtitle="Faixas de idade do backlog atual"
-                rows={metrics.slaHealth.openAgingBuckets.rows}
-                total={metrics.slaHealth.openAgingBuckets.total}
-                emptyLabel="Sem backlog no recorte."
-                onBucketClick={(bucket) => goToDrilldown({ type: 'SLA_AGING_BUCKET', bucketKey: bucket.key })}
-              />
-
-              <CompactDonutCard
-                title="GM (backlog atual)"
-                subtitle="Com GM vs GM pendente"
-                valueLabel={`${metrics.gmGovernance.pendingCount} (${metrics.gmGovernance.pendingPercentOfBacklog}%)`}
-                valueHint="GM pendente no backlog"
-                contextLabel="Base: backlog atual"
-                emptyLabel="Sem backlog no recorte."
-                items={[
-                  {
-                    key: 'WITH_GM',
-                    label: 'Com GM',
-                    value: Number(metrics.gmGovernance.withGmCount || 0),
-                    percent: Number(metrics.gmGovernance.withGmPercentOfBacklog || 0),
-                    color: '#2f80ed',
-                  },
-                  {
-                    key: 'PENDING_GM',
-                    label: 'GM pendente',
-                    value: Number(metrics.gmGovernance.pendingCount || 0),
-                    percent: Number(metrics.gmGovernance.pendingPercentOfBacklog || 0),
-                    color: '#a6403a',
-                  },
-                ]}
-                onSegmentClick={(segment) => goToDrilldown({ type: segment.key === 'WITH_GM' ? 'GM_BACKLOG_COM' : 'GM_BACKLOG_PENDENTE' })}
-              />
-
-              <DistributionBarList
-                title="GM pendente por Serviço Macro"
-                subtitle="Ranking no backlog atual"
-                total={metrics.gmGovernance.pendingCount}
-                rows={metrics.gmGovernance.pendingByServiceRanking}
-                emptyLabel="Sem backlog no recorte."
-                getBarColor={() => '#a6403a'}
-                formatValueLabel={(row) => `${row.count} | ${row.pendingPercentOfServiceBacklog}% do backlog do serviço`}
-                onRowClick={(row) => goToDrilldown({ type: 'GM_PENDENTE_SERVICO', values: row.values || [row.label] })}
-              />
-            </section>
-          ) : null}
-
           {activeTab === 'capacidade' ? (
-            <section className="grid gap-4 lg:grid-cols-2">
-              <section className="space-y-3 lg:col-span-2">
-                <SectionTitle title="Capacidade do Time" subtitle="Carga de trabalho em aberto e produtividade por executor." />
-                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                  <StatCard title="Sem responsável" value={metrics.teamCapacity.unassignedBacklogCount} hint="backlog atual" onClick={() => goToDrilldown({ type: 'CAPACITY_SEM_RESPONSAVEL' })} />
-                  <StatCard title="% sem responsável" value={`${metrics.teamCapacity.unassignedBacklogPercent}%`} hint="sobre backlog total" onClick={() => goToDrilldown({ type: 'CAPACITY_SEM_RESPONSAVEL' })} />
-                  <StatCard title="Em aberto atribuídos" value={metrics.teamCapacity.wipAssignedTotal} hint="carga atual" onClick={() => goToDrilldown({ type: 'CAPACITY_WIP_ASSIGNED' })} />
+            <section className="space-y-4">
+              <section className="space-y-3">
+                <SectionTitle title="Capacidade do Time" subtitle="Carga de trabalho em aberto, produtividade e oportunidades." />
+                <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-5">
+                  <StatCard title="Em Aberto Total" value={formatCountKpi(metrics.teamCapacity.totalBacklogCount)} hint="backlog agora" onClick={() => goToDrilldown({ type: 'BACKLOG_ATUAL' })} />
+                  <StatCard title="Em Aberto Atribuídos" value={formatCountKpi(metrics.teamCapacity.assignedBacklogCount)} hint="backlog agora" onClick={() => goToDrilldown({ type: 'CAPACITY_WIP_ASSIGNED' })} />
+                  <StatCard title="Sem Responsável" value={formatCountKpi(metrics.teamCapacity.unassignedBacklogCount)} hint="backlog agora" onClick={() => goToDrilldown({ type: 'CAPACITY_SEM_RESPONSAVEL' })} />
+                  <StatCard title="% Sem Responsável" value={formatPercentKpi(metrics.teamCapacity.unassignedBacklogPercent)} hint="do backlog total" onClick={() => goToDrilldown({ type: 'CAPACITY_SEM_RESPONSAVEL' })} />
+                  <StatCard title="Atrasados em Aberto" value={formatCountKpi(metrics.metricsNow.atrasadosEmAberto)} hint={`${formatPercentKpi(metrics.metricsNow.atrasadosEmAbertoPercentual)} do backlog`} onClick={() => goToDrilldown({ type: 'SLA_ATRASADOS_ABERTOS' })} />
                 </div>
               </section>
 
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+                <div className="grid grid-cols-1 gap-4 lg:col-span-2">
+                  <StackedExecutorLoadBars
+                    title="Carga por executor (em aberto)"
+                    subtitle="Base: backlog atribuído | ordenado por maior carga"
+                    rows={metrics.teamCapacity.wipByExecutor}
+                    emptyLabel="Sem chamados atribuídos no recorte."
+                    onRowClick={(row) => goToDrilldown({ type: 'CAPACITY_WIP_EXECUTOR', executorIds: row.values || [row.key] })}
+                    onSegmentClick={(row, segment) => goToDrilldown({
+                      type: 'CAPACITY_WIP_EXECUTOR_DELAY',
+                      executorIds: row.values || [row.key],
+                      delayed: segment === 'overdue',
+                    })}
+                  />
+                </div>
+
+                <div className='space-y-4'>
+                  <CompactDonutCard
+                    title="Composição do Backlog Atual"
+                    subtitle="Atribuídos vs Sem Responsável"
+                    valueLabel={formatCountKpi(metrics.teamCapacity.unassignedBacklogCount)}
+                    valueHint="sem responsável"
+                    contextLabel={`Total: ${metrics.teamCapacity.totalBacklogCount}`}
+                    emptyLabel="Sem backlog no recorte."
+                    items={[
+                      {
+                        key: 'ASSIGNED',
+                        label: 'Atribuídos',
+                        value: metrics.teamCapacity.assignedBacklogCount,
+                        percent: 100 - metrics.teamCapacity.unassignedBacklogPercent,
+                        color: '#2f80ed',
+                      },
+                      {
+                        key: 'UNASSIGNED',
+                        label: 'Sem responsável',
+                        value: metrics.teamCapacity.unassignedBacklogCount,
+                        percent: metrics.teamCapacity.unassignedBacklogPercent,
+                        color: '#f2994a',
+                      },
+                    ]}
+                    onSegmentClick={(segment) => goToDrilldown({ type: segment.key === 'UNASSIGNED' ? 'CAPACITY_SEM_RESPONSAVEL' : 'CAPACITY_WIP_ASSIGNED' })}
+                  />
+
+                  <article className='card p-4'>
+                    <h4 className="text-lg">Indicador de Capacidade</h4>
+                    <p className="mt-1 text-xs text-aluminium">Carga média por executor (referência)</p>
+                    <div className="mt-3 space-y-2">
+                      <div>
+                        <p className="text-sm text-mid-gray">Carga atual (média)</p>
+                        <p className="text-xl font-semibold">{metrics.teamCapacity.averageCapacity.currentLoadPerExecutor.toFixed(1)}</p>
+                        <p className="text-xs text-aluminium">chamados/executor</p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-mid-gray">Média recente (30d)</p>
+                        <p className="text-xl font-semibold">{
+                          typeof metrics.teamCapacity.averageCapacity.recentAverageLoadPerExecutor === 'number'
+                          ? metrics.teamCapacity.averageCapacity.recentAverageLoadPerExecutor.toFixed(1)
+                          : 'Indisponível'
+                        }</p>
+                         <p className="text-xs text-aluminium">chamados/executor</p>
+                      </div>
+                    </div>
+                  </article>
+                </div>
+              </div>
+
               <StackedExecutorLoadBars
-                title="Em aberto atribuídos por executor"
-                subtitle="Base: backlog atribuído | ordenado por maior carga"
-                rows={metrics.teamCapacity.wipByExecutor.rows}
-                emptyLabel="Sem dados para o recorte."
-                onRowClick={(row) => goToDrilldown({ type: 'CAPACITY_WIP_EXECUTOR', executorIds: row.values || [row.key] })}
-                onSegmentClick={(row, segment) => goToDrilldown({
-                  type: 'CAPACITY_WIP_EXECUTOR_DELAY',
-                  executorIds: row.values || [row.key],
-                  delayed: segment === 'DELAYED',
-                })}
-              />
-              <StackedExecutorLoadBars
-                title="Concluídos por executor (período)"
-                subtitle="Base: concluídos no período | ordenado por volume"
-                rows={metrics.teamCapacity.completedByExecutor.rows}
-                emptyLabel="Sem dados para o recorte."
+                title="Produtividade (Concluídos no Período)"
+                subtitle="Volume concluído por executor no período selecionado"
+                total={metrics.metricsPeriod.concluidosNoPeriodo}
+                rows={metrics.teamCapacity.completedByExecutor}
+                emptyLabel="Sem concluídos no recorte."
                 onRowClick={(row) => goToDrilldown({ type: 'CAPACITY_CONCLUIDOS_EXECUTOR', executorIds: row.values || [row.key] })}
                 onSegmentClick={(row, segment) => goToDrilldown({
                   type: 'CAPACITY_CONCLUIDOS_EXECUTOR_SLA',
                   executorIds: row.values || [row.key],
-                  delayed: segment === 'DELAYED',
+                  delayed: segment === 'overdue',
                 })}
               />
 
               <article className="card p-4 lg:col-span-2">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                  <h4 className="text-lg">Sem responsável (prioridade de gestão)</h4>
+                  <h4 className="text-lg">Ação Rápida: Atribuir chamados sem responsável</h4>
                   <button type="button" className="btn btn-secondary btn-compact" onClick={() => goToDrilldown({ type: 'CAPACITY_SEM_RESPONSAVEL' })}>Ver lista completa</button>
                 </div>
 
@@ -813,7 +865,7 @@ export default function GestaoDashboardPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {metrics.teamCapacity.unassignedOpenList.slice(0, 10).map((row) => (
+                        {metrics.teamCapacity.unassignedOpenList.map((row) => (
                           <tr key={row.id} className="border-t border-light-gray text-mid-gray">
                             <td className="py-2 pr-3 font-semibold text-hydro-blue"><button type="button" className="hover:underline" onClick={() => goToDetail(row.id)}>{row.id}</button></td>
                             <td className="py-2 pr-3">{row.titulo}</td><td className="py-2 pr-3">{row.area}</td><td className="py-2 pr-3">{row.servicoMacro}</td><td className="py-2 pr-3">{row.status}</td><td className="py-2 pr-3">{row.idadeDias}</td><td className="py-2 pr-1">{row.gm ? 'Sim' : 'Não'}</td>
