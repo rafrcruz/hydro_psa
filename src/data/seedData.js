@@ -186,3 +186,108 @@ export const seedServiceCatalog = SERVICE_MACROS.flatMap((macro) =>
     updatedAt: '2026-01-01T00:00:00.000Z',
   })),
 );
+
+function buildSeedNotificationId(requestId, recipientUserId, index) {
+  return `NTF-${requestId}-${recipientUserId}-${index}`;
+}
+
+export const seedNotifications = (() => {
+  const requestsById = seedRequests.reduce((acc, request) => {
+    acc[request.id] = request;
+    return acc;
+  }, {});
+
+  const base = [
+    {
+      requestId: 'CHD-0001',
+      createdAt: '2026-02-20T08:10:00.000Z',
+      type: 'NOVO_CHAMADO',
+      title: 'Novo chamado criado',
+      summary: 'CHD-0001 foi aberto e aguarda triagem.',
+      actorId: 'usr-ana',
+      actorName: 'Ana Martins',
+      actorRole: 'Solicitante',
+      recipientUserId: 'usr-ana',
+      read: false,
+    },
+    {
+      requestId: 'CHD-0002',
+      createdAt: '2026-02-21T10:00:00.000Z',
+      type: 'ATRIBUICAO',
+      title: 'Chamado atribuído para você',
+      summary: 'Você foi definido como responsável pelo CHD-0002.',
+      actorId: 'usr-livia',
+      actorName: 'Lívia Rocha',
+      actorRole: 'Automação',
+      recipientUserId: 'usr-exec-01',
+      read: false,
+    },
+    {
+      requestId: 'CHD-0003',
+      createdAt: '2026-02-22T09:15:00.000Z',
+      type: 'COMENTARIO',
+      title: 'Novo comentário no chamado',
+      summary: 'Bruno Silva comentou no CHD-0003.',
+      actorId: 'usr-exec-01',
+      actorName: 'Bruno Silva',
+      actorRole: 'Executor',
+      recipientUserId: 'usr-ana',
+      read: false,
+    },
+    {
+      requestId: 'CHD-0004',
+      createdAt: '2026-02-23T14:35:00.000Z',
+      type: 'STATUS_ALTERADO',
+      title: 'Status atualizado',
+      summary: 'CHD-0004 mudou para Em atendimento.',
+      actorId: 'usr-exec-02',
+      actorName: 'Carla Freitas',
+      actorRole: 'Executor',
+      recipientUserId: 'usr-livia',
+      read: false,
+    },
+    {
+      requestId: 'CHD-0005',
+      createdAt: '2026-02-24T11:20:00.000Z',
+      type: 'GM_ATUALIZADA',
+      title: 'GM atualizada',
+      summary: 'GM informada no CHD-0005.',
+      actorId: 'usr-exec-03',
+      actorName: 'Diego Ramos',
+      actorRole: 'Executor',
+      recipientUserId: 'usr-livia',
+      read: true,
+    },
+    {
+      requestId: 'CHD-0006',
+      createdAt: '2026-02-24T16:00:00.000Z',
+      type: 'STATUS_ALTERADO',
+      title: 'Status atualizado',
+      summary: 'CHD-0006 mudou para Aguardando solicitante.',
+      actorId: 'usr-exec-01',
+      actorName: 'Bruno Silva',
+      actorRole: 'Executor',
+      recipientUserId: 'usr-exec-01',
+      read: false,
+    },
+  ];
+
+  return base.map((entry, index) => {
+    const request = requestsById[entry.requestId];
+    return {
+      id: buildSeedNotificationId(entry.requestId, entry.recipientUserId, index + 1),
+      createdAt: entry.createdAt,
+      type: entry.type,
+      title: entry.title,
+      summary: entry.summary,
+      requestId: entry.requestId,
+      requestTitle: request?.titulo || 'Chamado',
+      actorId: entry.actorId,
+      actorName: entry.actorName,
+      actorRole: entry.actorRole,
+      recipientUserId: entry.recipientUserId,
+      read: entry.read,
+      readAt: entry.read ? entry.createdAt : '',
+    };
+  });
+})();

@@ -107,6 +107,27 @@ small {
   background: #f4f4f4;
 }
 
+.btn-compact {
+  padding: 0.4rem 0.65rem;
+  font-size: 0.82rem;
+  border-radius: 0.45rem;
+  line-height: 1;
+}
+
+.btn-icon {
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border-radius: 0.45rem;
+}
+
+.checkbox-lg {
+  width: 1.05rem;
+  height: 1.05rem;
+  cursor: pointer;
+  accent-color: #444d55;
+}
+
 .card {
   overflow: hidden;
   border-radius: 0.75rem;

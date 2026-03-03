@@ -2,6 +2,7 @@
 import { useNavigate } from 'react-router-dom';
 import { useProfile } from '../contexts/ProfileContext';
 import { getDefaultRoute } from '../router/routeConfig';
+import NotificationCenter from './NotificationCenter';
 
 export default function TopBar() {
   const { profile, setProfile, profiles, currentUser } = useProfile();
@@ -24,10 +25,12 @@ export default function TopBar() {
             alt="Hydro"
             className="h-[4.375rem] w-auto"
           />
-          <h1 className="text-3xl font-display leading-tight text-black">Portal de Solicitações da Automação</h1>
+          <h1 className="text-3xl font-display leading-tight text-black">{'Portal de Solicita\u00e7\u00f5es da Automa\u00e7\u00e3o'}</h1>
         </div>
 
         <div className="ml-auto flex items-center gap-3 font-arial">
+          <NotificationCenter profile={profile} currentUserId={currentUser.id} />
+
           <label htmlFor="profile-select" className="sr-only">Perfil</label>
           <select
             id="profile-select"
@@ -54,3 +57,4 @@ export default function TopBar() {
     </header>
   );
 }
+

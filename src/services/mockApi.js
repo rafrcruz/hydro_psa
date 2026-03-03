@@ -30,6 +30,19 @@ function makeActivityId() {
   return `ACT-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 }
 
+function makeNotificationId() {
+  return `NTF-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+}
+
+const AUTOMATION_USER_ID = 'usr-livia';
+const NOTIFICATION_CHANGED_EVENT = 'hydro:notifications-changed';
+
+function emitNotificationsChanged() {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(NOTIFICATION_CHANGED_EVENT));
+  }
+}
+
 function normalizeText(value) {
   return (value || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 }
@@ -147,6 +160,89 @@ async function addEventActivity(requestId, eventType, actor, payload = {}, creat
     attachments: [],
     createdAt,
   });
+}
+
+function getNotificationRecipients(request) {
+  const recipients = [request.solicitanteId, AUTOMATION_USER_ID];
+  if (request.executorResponsavelId) {
+    recipients.push(request.executorResponsavelId);
+  }
+  return Array.from(new Set(recipients.filter(Boolean)));
+}
+
+function buildNotificationSummary(type, request, payload = {}) {
+  if (type === 'NOVO_CHAMADO') {
+    return `${request.id} foi aberto e aguarda triagem.`;
+  }
+  if (type === 'COMENTARIO') {
+    return `${payload.actorName || 'Usuário'} comentou no ${request.id}.`;
+  }
+  if (type === 'STATUS_ALTERADO') {
+    return `${request.id} mudou de ${payload.from} para ${payload.to}.`;
+  }
+  if (type === 'ATRIBUICAO') {
+    return `Responsável de ${request.id}: ${payload.toName || 'Sem responsável'}.`;
+  }
+  if (type === 'GM_ATUALIZADA') {
+    if (!payload.to) {
+      return `GM removida no ${request.id}.`;
+    }
+    if (!payload.from) {
+      return `GM informada no ${request.id}: ${payload.to}.`;
+    }
+    return `GM alterada no ${request.id}: ${payload.from} -> ${payload.to}.`;
+  }
+  return `Atualização registrada no chamado ${request.id}.`;
+}
+
+function buildNotificationTitle(type) {
+  if (type === 'NOVO_CHAMADO') {
+    return 'Novo chamado criado';
+  }
+  if (type === 'COMENTARIO') {
+    return 'Novo comentário no chamado';
+  }
+  if (type === 'STATUS_ALTERADO') {
+    return 'Status alterado';
+  }
+  if (type === 'ATRIBUICAO') {
+    return 'Atribuição de responsável';
+  }
+  if (type === 'GM_ATUALIZADA') {
+    return 'GM atualizada';
+  }
+  return 'Atualização de chamado';
+}
+
+async function createRequestNotifications({
+  type,
+  request,
+  actor,
+  payload = {},
+  createdAt = new Date().toISOString(),
+}) {
+  const recipients = getNotificationRecipients(request);
+  const base = {
+    createdAt,
+    type,
+    title: buildNotificationTitle(type),
+    summary: buildNotificationSummary(type, request, { ...payload, actorName: actor?.name }),
+    requestId: request.id,
+    requestTitle: request.titulo,
+    actorId: actor?.id || '',
+    actorName: actor?.name || 'Sistema',
+    actorRole: actor?.role || 'Sistema',
+    read: false,
+    readAt: '',
+  };
+
+  await db.notifications.bulkAdd(
+    recipients.map((recipientUserId) => ({
+      id: makeNotificationId(),
+      ...base,
+      recipientUserId,
+    })),
+  );
 }
 
 function computePriorityAndSla(requestData) {
@@ -304,14 +400,27 @@ export async function createRequest(payload, requesterUser) {
   const request = { ...requestBase, prioridade, slaHoras };
 
   await delay();
-  await db.transaction('rw', db.requests, db.activities, async () => {
+  await db.transaction('rw', db.requests, db.activities, db.notifications, async () => {
     await db.requests.add(request);
 
     await addEventActivity(id, EVENT_TYPES.CHAMADO_CRIADO, requesterUser, { requestId: id }, now);
+    await createRequestNotifications({
+      type: 'NOVO_CHAMADO',
+      request,
+      actor: requesterUser,
+      createdAt: now,
+    });
     await addEventActivity(id, EVENT_TYPES.PRIORIDADE_RECALCULADA, requesterUser, { to: prioridade }, new Date(new Date(now).getTime() + 1000).toISOString());
     await addEventActivity(id, EVENT_TYPES.SLA_RECALCULADO, requesterUser, { to: slaHoras }, new Date(new Date(now).getTime() + 2000).toISOString());
     if (request.gmId) {
       await addEventActivity(id, EVENT_TYPES.GM_ATUALIZADA, requesterUser, { from: '', to: request.gmId }, new Date(new Date(now).getTime() + 2300).toISOString());
+      await createRequestNotifications({
+        type: 'GM_ATUALIZADA',
+        request,
+        actor: requesterUser,
+        payload: { from: '', to: request.gmId },
+        createdAt: new Date(new Date(now).getTime() + 2300).toISOString(),
+      });
     }
 
     if (payload.attachments?.length) {
@@ -331,6 +440,7 @@ export async function createRequest(payload, requesterUser) {
       });
     }
   });
+  emitNotificationsChanged();
 
   return request;
 }
@@ -368,7 +478,14 @@ export async function assignRequest(requestId, executorId, actorUser) {
   const now = new Date().toISOString();
   const toUser = executorId ? await db.users.get(executorId) : null;
 
-  await db.transaction('rw', db.requests, db.activities, async () => {
+  const nextRequest = {
+    ...request,
+    executorResponsavelId: executorId || '',
+    dataAtualizacao: now,
+    status: request.status === 'Novo' ? 'Triagem' : request.status,
+  };
+
+  await db.transaction('rw', db.requests, db.activities, db.notifications, async () => {
     await db.requests.update(requestId, {
       executorResponsavelId: executorId || '',
       dataAtualizacao: now,
@@ -376,6 +493,13 @@ export async function assignRequest(requestId, executorId, actorUser) {
     });
 
     await addEventActivity(requestId, EVENT_TYPES.ATRIBUIDO_EXECUTOR, actorUser, { toName: toUser?.name || 'Sem responsável' }, now);
+    await createRequestNotifications({
+      type: 'ATRIBUICAO',
+      request: nextRequest,
+      actor: actorUser,
+      payload: { toName: toUser?.name || 'Sem responsável' },
+      createdAt: now,
+    });
     if (request.status === 'Novo') {
       await addEventActivity(
         requestId,
@@ -384,8 +508,16 @@ export async function assignRequest(requestId, executorId, actorUser) {
         { from: 'Novo', to: 'Triagem' },
         new Date(new Date(now).getTime() + 1000).toISOString(),
       );
+      await createRequestNotifications({
+        type: 'STATUS_ALTERADO',
+        request: nextRequest,
+        actor: actorUser,
+        payload: { from: 'Novo', to: 'Triagem' },
+        createdAt: new Date(new Date(now).getTime() + 1000).toISOString(),
+      });
     }
   });
+  emitNotificationsChanged();
 
   return getRequestById(requestId);
 }
@@ -406,10 +538,20 @@ export async function updateRequestStatus(requestId, nextStatus, actorUser) {
     dataFechamento: FINAL_STATUS.includes(nextStatus) ? now : '',
   };
 
-  await db.transaction('rw', db.requests, db.activities, async () => {
+  const nextRequest = { ...request, ...updates };
+
+  await db.transaction('rw', db.requests, db.activities, db.notifications, async () => {
     await db.requests.update(requestId, updates);
     await addEventActivity(requestId, EVENT_TYPES.STATUS_ALTERADO, actorUser, { from: request.status, to: nextStatus }, now);
+    await createRequestNotifications({
+      type: 'STATUS_ALTERADO',
+      request: nextRequest,
+      actor: actorUser,
+      payload: { from: request.status, to: nextStatus },
+      createdAt: now,
+    });
   });
+  emitNotificationsChanged();
 
   return getRequestById(requestId);
 }
@@ -426,14 +568,24 @@ export async function updateRequestGm(requestId, gmId, actorUser) {
   const now = new Date().toISOString();
   const nextGm = (gmId || '').trim();
 
-  await db.transaction('rw', db.requests, db.activities, async () => {
+  const nextRequest = { ...request, gmId: nextGm, dataAtualizacao: now };
+
+  await db.transaction('rw', db.requests, db.activities, db.notifications, async () => {
     await db.requests.update(requestId, {
       gmId: nextGm,
       dataAtualizacao: now,
     });
 
     await addEventActivity(requestId, EVENT_TYPES.GM_ATUALIZADA, actorUser, { from: request.gmId, to: nextGm }, now);
+    await createRequestNotifications({
+      type: 'GM_ATUALIZADA',
+      request: nextRequest,
+      actor: actorUser,
+      payload: { from: request.gmId, to: nextGm },
+      createdAt: now,
+    });
   });
+  emitNotificationsChanged();
 
   return getRequestById(requestId);
 }
@@ -483,7 +635,9 @@ export async function addRequestComment(requestId, actorUser, contentHtml, attac
 
   const normalizedAttachments = attachments.map(serializeAttachment).filter(Boolean);
 
-  await db.transaction('rw', db.activities, db.requests, async () => {
+  const nextRequest = { ...request, dataAtualizacao: now };
+
+  await db.transaction('rw', db.activities, db.requests, db.notifications, async () => {
     await db.activities.add({
       id: makeActivityId(),
       requestId,
@@ -499,7 +653,14 @@ export async function addRequestComment(requestId, actorUser, contentHtml, attac
     });
 
     await db.requests.update(requestId, { dataAtualizacao: now });
+    await createRequestNotifications({
+      type: 'COMENTARIO',
+      request: nextRequest,
+      actor: actorUser,
+      createdAt: now,
+    });
   });
+  emitNotificationsChanged();
 
   return getRequestById(requestId);
 }
@@ -508,6 +669,113 @@ export async function getUsers() {
   await ensureDbReady();
   await delay();
   return db.users.toArray();
+}
+
+function mapNotification(item) {
+  return {
+    id: item.id,
+    createdAt: item.createdAt,
+    type: item.type,
+    title: item.title,
+    summary: item.summary,
+    requestId: item.requestId,
+    requestTitle: item.requestTitle,
+    actorId: item.actorId,
+    actorName: item.actorName,
+    actorRole: item.actorRole,
+    read: Boolean(item.read),
+    readAt: item.readAt || '',
+  };
+}
+
+function sortNotificationsDesc(a, b) {
+  return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+}
+
+export function getNotificationEventName() {
+  return NOTIFICATION_CHANGED_EVENT;
+}
+
+export async function getNotifications(profile, userId, filter = 'ALL') {
+  await ensureDbReady();
+  await delay();
+
+  if (profile === 'Gestão' || !userId) {
+    return [];
+  }
+
+  const rows = await db.notifications
+    .where('recipientUserId')
+    .equals(userId)
+    .toArray();
+
+  return rows
+    .filter((item) => (filter === 'UNREAD' ? !item.read : true))
+    .sort(sortNotificationsDesc)
+    .map(mapNotification);
+}
+
+export async function getUnreadNotificationsCount(profile, userId) {
+  await ensureDbReady();
+  await delay();
+
+  if (profile === 'Gestão' || !userId) {
+    return 0;
+  }
+
+  const rows = await db.notifications.where('recipientUserId').equals(userId).toArray();
+  return rows.filter((item) => !item.read).length;
+}
+
+export async function markNotificationAsRead(notificationId, userId) {
+  await ensureDbReady();
+  await delay();
+
+  const row = await db.notifications.get(notificationId);
+  if (!row || row.recipientUserId !== userId) {
+    return false;
+  }
+
+  if (!row.read) {
+    await db.notifications.update(notificationId, { read: true, readAt: new Date().toISOString() });
+    emitNotificationsChanged();
+  }
+  return true;
+}
+
+export async function markAllNotificationsAsRead(profile, userId) {
+  await ensureDbReady();
+  await delay();
+
+  if (profile === 'Gestão' || !userId) {
+    return 0;
+  }
+
+  const now = new Date().toISOString();
+  const rows = await db.notifications.where('recipientUserId').equals(userId).toArray();
+  const unreadRows = rows.filter((item) => !item.read);
+
+  await Promise.all(unreadRows.map((item) => db.notifications.update(item.id, { read: true, readAt: now })));
+  if (unreadRows.length) {
+    emitNotificationsChanged();
+  }
+  return unreadRows.length;
+}
+
+export async function clearNotifications(profile, userId) {
+  await ensureDbReady();
+  await delay();
+
+  if (profile === 'Gestão' || !userId) {
+    return 0;
+  }
+
+  const rows = await db.notifications.where('recipientUserId').equals(userId).toArray();
+  await Promise.all(rows.map((item) => db.notifications.delete(item.id)));
+  if (rows.length) {
+    emitNotificationsChanged();
+  }
+  return rows.length;
 }
 
 function parseMonthYear(value) {
@@ -608,18 +876,15 @@ export async function createServiceSubcategory(macro, name) {
   const normalizedName = normalizeCatalogName(cleanName);
   const rowsInMacro = await findCatalogByMacro(macro);
   const existing = rowsInMacro.find((row) => row.normalizedName === normalizedName);
-  const now = new Date().toISOString();
-
-  if (existing?.active) {
-    throw new Error('Essa subcategoria já existe nesse serviço macro.');
-  }
-
-  if (existing && !existing.active) {
-    await db.serviceCatalog.update(existing.id, { name: cleanName, active: true, updatedAt: now });
-    return mapCatalogRow({ ...existing, name: cleanName, active: true, updatedAt: now });
+  if (existing) {
+    if (existing.active) {
+      throw new Error('Essa subcategoria já existe nesse serviço macro.');
+    }
+    throw new Error('Essa subcategoria já existe e está desativada. Use a ação Reativar.');
   }
 
   const id = `CAT-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+  const now = new Date().toISOString();
   const nextRow = {
     id,
     macro,
@@ -651,11 +916,11 @@ export async function updateServiceSubcategory(subcategoryId, nextName) {
   const normalizedName = normalizeCatalogName(cleanName);
   const rowsInMacro = await findCatalogByMacro(row.macro);
   const conflict = rowsInMacro.find(
-    (item) => item.id !== subcategoryId && item.active && item.normalizedName === normalizedName,
+    (item) => item.id !== subcategoryId && item.normalizedName === normalizedName,
   );
 
   if (conflict) {
-    throw new Error('Já existe uma subcategoria ativa com esse nome nesse serviço macro.');
+    throw new Error('Já existe uma subcategoria com esse nome nesse serviço macro.');
   }
 
   const updatedAt = new Date().toISOString();
@@ -675,6 +940,29 @@ export async function deactivateServiceSubcategory(subcategoryId) {
   const updatedAt = new Date().toISOString();
   await db.serviceCatalog.update(subcategoryId, { active: false, updatedAt });
   return mapCatalogRow({ ...row, active: false, updatedAt });
+}
+
+export async function reactivateServiceSubcategory(subcategoryId) {
+  await ensureDbReady();
+  await delay();
+
+  const row = await db.serviceCatalog.get(subcategoryId);
+  if (!row) {
+    throw new Error('Subcategoria não encontrada.');
+  }
+
+  const rowsInMacro = await findCatalogByMacro(row.macro);
+  const conflict = rowsInMacro.find(
+    (item) => item.id !== subcategoryId && item.active && item.normalizedName === row.normalizedName,
+  );
+
+  if (conflict) {
+    throw new Error('Já existe uma subcategoria ativa com esse nome nesse serviço macro.');
+  }
+
+  const updatedAt = new Date().toISOString();
+  await db.serviceCatalog.update(subcategoryId, { active: true, updatedAt });
+  return mapCatalogRow({ ...row, active: true, updatedAt });
 }
 
 export async function getAutomations() {
