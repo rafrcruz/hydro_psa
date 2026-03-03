@@ -1,7 +1,7 @@
 ﻿import Dexie from 'dexie';
-import { seedActivities, seedAutomations, seedRequests, seedUsers } from './seedData';
+import { seedActivities, seedAutomations, seedRequests, seedServiceCatalog, seedUsers } from './seedData';
 
-const SEED_VERSION = 2;
+const SEED_VERSION = 3;
 
 class HydroPsaDb extends Dexie {
   constructor() {
@@ -22,6 +22,16 @@ class HydroPsaDb extends Dexie {
       metadata: 'key',
       comments: 'id, requestId, authorId, createdAt',
     });
+
+    this.version(3).stores({
+      users: 'id, role, name',
+      automations: 'id, status, owner',
+      requests: 'id, solicitanteId, executorResponsavelId, status, prioridade, area, servicoMacro, dataInclusao, dataAtualizacao, dataFechamento',
+      activities: 'id, requestId, kind, eventType, actorId, createdAt',
+      metadata: 'key',
+      comments: 'id, requestId, authorId, createdAt',
+      serviceCatalog: 'id, macro, normalizedName, active, updatedAt',
+    });
   }
 }
 
@@ -34,18 +44,20 @@ export async function ensureSeedData() {
     return;
   }
 
-  await db.transaction('rw', db.users, db.automations, db.requests, db.activities, db.metadata, db.comments, async () => {
+  await db.transaction('rw', db.users, db.automations, db.requests, db.activities, db.metadata, db.comments, db.serviceCatalog, async () => {
     await db.users.clear();
     await db.automations.clear();
     await db.requests.clear();
     await db.activities.clear();
     await db.metadata.clear();
     await db.comments.clear();
+    await db.serviceCatalog.clear();
 
     await db.users.bulkAdd(seedUsers);
     await db.automations.bulkAdd(seedAutomations);
     await db.requests.bulkAdd(seedRequests);
     await db.activities.bulkAdd(seedActivities);
+    await db.serviceCatalog.bulkAdd(seedServiceCatalog);
     await db.metadata.put({ key: 'seedVersion', value: SEED_VERSION });
   });
 }

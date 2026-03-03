@@ -1,7 +1,7 @@
 ﻿import { User } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useProfile } from '../contexts/ProfileContext';
-import { routeConfig } from '../router/routeConfig';
+import { getDefaultRoute } from '../router/routeConfig';
 
 export default function TopBar() {
   const { profile, setProfile, profiles, currentUser } = useProfile();
@@ -9,7 +9,7 @@ export default function TopBar() {
 
   const onProfileChange = (nextProfile) => {
     setProfile(nextProfile);
-    const defaultRoute = routeConfig[nextProfile]?.[0]?.path;
+    const defaultRoute = getDefaultRoute(nextProfile);
     if (defaultRoute) {
       navigate(defaultRoute, { replace: true });
     }

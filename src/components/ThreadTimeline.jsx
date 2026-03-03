@@ -19,9 +19,11 @@ export default function ThreadTimeline({ items = [] }) {
     return <p className="text-sm text-aluminium">Ainda não há atividades neste chamado.</p>;
   }
 
+  const sortedItems = [...items].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
   return (
     <div className="space-y-3">
-      {items.map((item) => (
+      {sortedItems.map((item) => (
         <article key={item.id} className="rounded-lg border border-light-gray bg-white p-3">
           <div className="flex flex-wrap items-center gap-2 text-xs text-aluminium">
             {item.kind === 'EVENT' ? (

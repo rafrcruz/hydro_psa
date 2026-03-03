@@ -5,7 +5,6 @@ import {
   EVENT_TYPES,
   FINAL_STATUS,
   SERVICE_MACROS,
-  SERVICE_SUBCATEGORIES,
   STATUS_OPTIONS,
   calculatePriority,
   calculateSlaHours,
@@ -16,6 +15,10 @@ const SIMULATED_DELAY_MS = 180;
 
 function delay(ms = SIMULATED_DELAY_MS) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function ensureDbReady() {
+  await ensureSeedData();
 }
 
 function parseRequestSeq(requestId) {
@@ -29,6 +32,14 @@ function makeActivityId() {
 
 function normalizeText(value) {
   return (value || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
+function normalizeCatalogName(value) {
+  return normalizeText(value).replace(/\s+/g, ' ').trim();
+}
+
+function cleanCatalogName(value) {
+  return (value || '').replace(/\s+/g, ' ').trim();
 }
 
 function includesText(request, query) {
@@ -177,22 +188,66 @@ export async function bootstrapMockApi() {
   await ensureSeedData();
 }
 
-export function getRequestFormOptions() {
+async function listCatalogRows() {
+  const rows = await db.serviceCatalog.toArray();
+  return rows.sort((a, b) => a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' }));
+}
+
+function buildSubcategoryMap(rows, activeOnly = true) {
+  const map = SERVICE_MACROS.reduce((acc, macro) => {
+    acc[macro] = [];
+    return acc;
+  }, {});
+
+  rows.forEach((row) => {
+    if (!map[row.macro]) {
+      return;
+    }
+    if (activeOnly && !row.active) {
+      return;
+    }
+    map[row.macro].push(row.name);
+  });
+
+  Object.keys(map).forEach((macro) => {
+    map[macro] = map[macro].sort((a, b) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }));
+  });
+
+  return map;
+}
+
+async function ensureValidSubcategoryForMacro(servicoMacro, servicoSubcategoria) {
+  const normalizedName = normalizeCatalogName(servicoSubcategoria);
+  const inMacro = await db.serviceCatalog.where('macro').equals(servicoMacro).toArray();
+  const match = inMacro.find((row) => row.normalizedName === normalizedName);
+
+  if (!match || !match.active) {
+    throw new Error('Subcategoria inválida para o serviço macro selecionado.');
+  }
+}
+
+export async function getRequestFormOptions() {
+  await ensureDbReady();
+  await delay();
+  const rows = await listCatalogRows();
+
   return {
     areas: AREAS,
     serviceMacros: SERVICE_MACROS,
-    serviceSubcategories: SERVICE_SUBCATEGORIES,
+    serviceSubcategories: buildSubcategoryMap(rows, true),
     demandTypes: DEMAND_TYPES,
     statusOptions: STATUS_OPTIONS,
   };
 }
 
 export async function getExecutors() {
+  await ensureDbReady();
   await delay();
   return db.users.where('role').equals('Executor').sortBy('name');
 }
 
 export async function getRequesterRequests(requesterId, filters = {}) {
+  await ensureDbReady();
   await delay();
   const usersById = await getUsersIndex();
   const requests = await db.requests.where('solicitanteId').equals(requesterId).toArray();
@@ -203,6 +258,7 @@ export async function getRequesterRequests(requesterId, filters = {}) {
 }
 
 export async function getQueueRequests(filters = {}) {
+  await ensureDbReady();
   await delay();
   const usersById = await getUsersIndex();
   const requests = await db.requests.toArray();
@@ -213,13 +269,18 @@ export async function getQueueRequests(filters = {}) {
 }
 
 export async function getRecentRequests(limit = 5) {
+  await ensureDbReady();
   const all = await getQueueRequests();
   return all.slice(0, limit);
 }
 
 export async function createRequest(payload, requesterUser) {
+  await ensureDbReady();
   const now = new Date().toISOString();
   const id = await nextRequestId();
+  const servicoSubcategoria = cleanCatalogName(payload.servicoSubcategoria);
+
+  await ensureValidSubcategoryForMacro(payload.servicoMacro, servicoSubcategoria);
 
   const requestBase = {
     id,
@@ -229,7 +290,7 @@ export async function createRequest(payload, requesterUser) {
     descricao: payload.descricao,
     area: payload.area,
     servicoMacro: payload.servicoMacro,
-    servicoSubcategoria: payload.servicoSubcategoria,
+    servicoSubcategoria,
     tipoDemanda: payload.tipoDemanda,
     gmId: payload.gmId?.trim() || '',
     grupoExecutor: resolveGroupExecutor(payload.servicoMacro),
@@ -275,6 +336,7 @@ export async function createRequest(payload, requesterUser) {
 }
 
 export async function getRequestById(requestId) {
+  await ensureDbReady();
   await delay();
 
   const request = await db.requests.get(requestId);
@@ -295,6 +357,7 @@ export async function getRequestById(requestId) {
 }
 
 export async function assignRequest(requestId, executorId, actorUser) {
+  await ensureDbReady();
   await delay();
 
   const request = await db.requests.get(requestId);
@@ -328,6 +391,7 @@ export async function assignRequest(requestId, executorId, actorUser) {
 }
 
 export async function updateRequestStatus(requestId, nextStatus, actorUser) {
+  await ensureDbReady();
   await delay();
 
   const request = await db.requests.get(requestId);
@@ -351,6 +415,7 @@ export async function updateRequestStatus(requestId, nextStatus, actorUser) {
 }
 
 export async function updateRequestGm(requestId, gmId, actorUser) {
+  await ensureDbReady();
   await delay();
 
   const request = await db.requests.get(requestId);
@@ -374,6 +439,7 @@ export async function updateRequestGm(requestId, gmId, actorUser) {
 }
 
 export async function updateRequestDemandType(requestId, tipoDemanda, actorUser) {
+  await ensureDbReady();
   await delay();
   const request = await db.requests.get(requestId);
   if (!request) {
@@ -400,6 +466,7 @@ export async function updateRequestDemandType(requestId, tipoDemanda, actorUser)
 }
 
 export async function addRequestComment(requestId, actorUser, contentHtml, attachments = []) {
+  await ensureDbReady();
   await delay();
 
   const request = await db.requests.get(requestId);
@@ -438,6 +505,7 @@ export async function addRequestComment(requestId, actorUser, contentHtml, attac
 }
 
 export async function getUsers() {
+  await ensureDbReady();
   await delay();
   return db.users.toArray();
 }
@@ -470,6 +538,7 @@ function countBy(list, field) {
 }
 
 export async function getDashboardMetrics(period = '') {
+  await ensureDbReady();
   await delay();
   const requests = (await db.requests.toArray()).filter((item) => matchesPeriod(item, period));
 
@@ -491,7 +560,125 @@ export async function getDashboardMetrics(period = '') {
   };
 }
 
+function mapCatalogRow(row) {
+  return {
+    id: row.id,
+    macro: row.macro,
+    name: row.name,
+    active: Boolean(row.active),
+    updatedAt: row.updatedAt,
+  };
+}
+
+export async function getServiceCatalog(search = '') {
+  await ensureDbReady();
+  await delay();
+
+  const normalizedSearch = normalizeCatalogName(search);
+  const rows = await listCatalogRows();
+  const filteredRows = normalizedSearch
+    ? rows.filter((row) => normalizeCatalogName(row.name).includes(normalizedSearch))
+    : rows;
+
+  return SERVICE_MACROS.map((macro) => ({
+    macro,
+    subcategories: filteredRows
+      .filter((row) => row.macro === macro)
+      .sort((a, b) => Number(b.active) - Number(a.active) || a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' }))
+      .map(mapCatalogRow),
+  }));
+}
+
+async function findCatalogByMacro(macro) {
+  return db.serviceCatalog.where('macro').equals(macro).toArray();
+}
+
+export async function createServiceSubcategory(macro, name) {
+  await ensureDbReady();
+  await delay();
+
+  const cleanName = cleanCatalogName(name);
+  if (!SERVICE_MACROS.includes(macro)) {
+    throw new Error('Serviço macro inválido.');
+  }
+  if (!cleanName) {
+    throw new Error('Informe o nome da subcategoria.');
+  }
+
+  const normalizedName = normalizeCatalogName(cleanName);
+  const rowsInMacro = await findCatalogByMacro(macro);
+  const existing = rowsInMacro.find((row) => row.normalizedName === normalizedName);
+  const now = new Date().toISOString();
+
+  if (existing?.active) {
+    throw new Error('Essa subcategoria já existe nesse serviço macro.');
+  }
+
+  if (existing && !existing.active) {
+    await db.serviceCatalog.update(existing.id, { name: cleanName, active: true, updatedAt: now });
+    return mapCatalogRow({ ...existing, name: cleanName, active: true, updatedAt: now });
+  }
+
+  const id = `CAT-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+  const nextRow = {
+    id,
+    macro,
+    name: cleanName,
+    normalizedName,
+    active: true,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  await db.serviceCatalog.add(nextRow);
+  return mapCatalogRow(nextRow);
+}
+
+export async function updateServiceSubcategory(subcategoryId, nextName) {
+  await ensureDbReady();
+  await delay();
+
+  const row = await db.serviceCatalog.get(subcategoryId);
+  if (!row) {
+    throw new Error('Subcategoria não encontrada.');
+  }
+
+  const cleanName = cleanCatalogName(nextName);
+  if (!cleanName) {
+    throw new Error('Informe o nome da subcategoria.');
+  }
+
+  const normalizedName = normalizeCatalogName(cleanName);
+  const rowsInMacro = await findCatalogByMacro(row.macro);
+  const conflict = rowsInMacro.find(
+    (item) => item.id !== subcategoryId && item.active && item.normalizedName === normalizedName,
+  );
+
+  if (conflict) {
+    throw new Error('Já existe uma subcategoria ativa com esse nome nesse serviço macro.');
+  }
+
+  const updatedAt = new Date().toISOString();
+  await db.serviceCatalog.update(subcategoryId, { name: cleanName, normalizedName, updatedAt });
+  return mapCatalogRow({ ...row, name: cleanName, normalizedName, updatedAt });
+}
+
+export async function deactivateServiceSubcategory(subcategoryId) {
+  await ensureDbReady();
+  await delay();
+
+  const row = await db.serviceCatalog.get(subcategoryId);
+  if (!row) {
+    throw new Error('Subcategoria não encontrada.');
+  }
+
+  const updatedAt = new Date().toISOString();
+  await db.serviceCatalog.update(subcategoryId, { active: false, updatedAt });
+  return mapCatalogRow({ ...row, active: false, updatedAt });
+}
+
 export async function getAutomations() {
+  await ensureDbReady();
   await delay();
   return db.automations.toArray();
 }

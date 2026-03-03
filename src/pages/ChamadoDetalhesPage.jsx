@@ -1,15 +1,14 @@
 ﻿import { useEffect, useMemo, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useLocation, useParams } from 'react-router-dom';
 import RichTextComposer from '../components/RichTextComposer';
 import ThreadTimeline from '../components/ThreadTimeline';
 import { useProfile } from '../contexts/ProfileContext';
-import { DEMAND_TYPES, STATUS_OPTIONS } from '../data/catalog/requestCatalog';
+import { STATUS_OPTIONS } from '../data/catalog/requestCatalog';
 import {
   addRequestComment,
   assignRequest,
   getExecutors,
   getRequestById,
-  updateRequestDemandType,
   updateRequestGm,
   updateRequestStatus,
 } from '../services/mockApi';
@@ -21,12 +20,9 @@ function formatDate(value) {
   return new Date(value).toLocaleString('pt-BR');
 }
 
-function canOperate(profile) {
-  return profile === 'Executor' || profile === 'Automação';
-}
-
 export default function ChamadoDetalhesPage() {
   const { id } = useParams();
+  const location = useLocation();
   const { profile, currentUser } = useProfile();
   const [request, setRequest] = useState(null);
   const [executors, setExecutors] = useState([]);
@@ -35,7 +31,7 @@ export default function ChamadoDetalhesPage() {
   const [gmDraft, setGmDraft] = useState('');
   const [loading, setLoading] = useState(true);
 
-  const isOperator = canOperate(profile);
+  const canEditExecutorActions = profile === 'Executor' || profile === 'Automação';
 
   const loadRequest = async () => {
     setLoading(true);
@@ -62,10 +58,10 @@ export default function ChamadoDetalhesPage() {
   }, [id]);
 
   useEffect(() => {
-    if (isOperator) {
+    if (canEditExecutorActions) {
       getExecutors().then(setExecutors);
     }
-  }, [isOperator]);
+  }, [canEditExecutorActions]);
 
   const onAddComment = async (event) => {
     event.preventDefault();
@@ -99,12 +95,19 @@ export default function ChamadoDetalhesPage() {
     await loadRequest();
   };
 
-  const onDemandTypeChange = async (event) => {
-    await updateRequestDemandType(id, event.target.value, currentUser);
-    await loadRequest();
-  };
-
   const gmAlert = useMemo(() => request?.gmPendente, [request?.gmPendente]);
+  const backToListPath = useMemo(() => {
+    if (location.pathname.startsWith('/solicitante/')) {
+      return '/solicitante/chamados';
+    }
+    if (location.pathname.startsWith('/executor/')) {
+      return '/executor/fila';
+    }
+    if (location.pathname.startsWith('/automacao/')) {
+      return '/automacao/fila';
+    }
+    return profile === 'Solicitante' ? '/solicitante/chamados' : '/executor/fila';
+  }, [location.pathname, profile]);
 
   if (loading) {
     return <p className="text-aluminium">Carregando...</p>;
@@ -114,7 +117,7 @@ export default function ChamadoDetalhesPage() {
     return (
       <section>
         <p className="text-mid-gray">Chamado não encontrado.</p>
-        <Link to="/" className="mt-2 inline-block text-hydro-blue hover:underline">Voltar</Link>
+        <Link to={backToListPath} className="mt-2 inline-block text-hydro-blue hover:underline">Voltar para a lista</Link>
       </section>
     );
   }
@@ -158,13 +161,13 @@ export default function ChamadoDetalhesPage() {
         <div className="grid gap-3 md:grid-cols-2">
           <label className="text-sm text-mid-gray">
             GM / ServiceNow
-            <div className="mt-1 flex gap-2">
-              <input className="input" value={gmDraft} onChange={(event) => setGmDraft(event.target.value)} placeholder="Ex.: GM-01234" />
-              <button type="button" className="btn btn-secondary" onClick={onSaveGm}>Salvar GM</button>
+            <div className="mt-1 flex flex-col gap-2 sm:flex-row sm:items-center">
+              <input className="input sm:flex-1" value={gmDraft} onChange={(event) => setGmDraft(event.target.value)} placeholder="Ex.: GM-01234" />
+              <button type="button" className="btn btn-secondary whitespace-nowrap px-4 py-2 sm:w-auto" onClick={onSaveGm}>Salvar GM</button>
             </div>
           </label>
 
-          {isOperator ? (
+          {canEditExecutorActions ? (
             <label className="text-sm text-mid-gray">
               Status
               <select className="input mt-1" value={request.status} onChange={onStatusChange}>
@@ -173,16 +176,7 @@ export default function ChamadoDetalhesPage() {
             </label>
           ) : null}
 
-          {isOperator ? (
-            <label className="text-sm text-mid-gray">
-              Tipo de Demanda (recalcula prioridade/SLA)
-              <select className="input mt-1" value={request.tipoDemanda} onChange={onDemandTypeChange}>
-                {DEMAND_TYPES.map((demandType) => <option key={demandType} value={demandType}>{demandType}</option>)}
-              </select>
-            </label>
-          ) : null}
-
-          {isOperator ? (
+          {canEditExecutorActions ? (
             <label className="text-sm text-mid-gray">
               Atribuir responsável
               <select className="input mt-1" value={request.executorResponsavelId || ''} onChange={onAssignOther}>
@@ -193,7 +187,7 @@ export default function ChamadoDetalhesPage() {
           ) : null}
         </div>
 
-        {isOperator ? (
+        {canEditExecutorActions ? (
           <button type="button" onClick={onAssignToMe} className="btn btn-primary w-fit">Assumir para mim</button>
         ) : null}
       </article>

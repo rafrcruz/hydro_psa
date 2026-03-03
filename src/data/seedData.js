@@ -24,6 +24,10 @@ const executors = [
   'Larissa Campos',
 ];
 
+function normalizeCatalogText(value) {
+  return (value || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+}
+
 export const seedUsers = [
   { id: 'usr-ana', name: 'Ana Martins', email: 'ana.martins@hydro.demo', role: 'Solicitante', area: 'Automação e Energia' },
   ...executors.map((name, index) => ({
@@ -170,3 +174,15 @@ export const seedAutomations = [
   { id: 'auto-3', name: 'Provisionamento VPN', owner: 'Segurança', status: 'Em rollout', slaHours: 12 },
   { id: 'auto-4', name: 'Checklist onboarding', owner: 'RH Tech', status: 'Ativo', slaHours: 24 },
 ];
+
+export const seedServiceCatalog = SERVICE_MACROS.flatMap((macro) =>
+  (SERVICE_SUBCATEGORIES[macro] || []).map((name, index) => ({
+    id: `CAT-${macro}-${String(index + 1).padStart(3, '0')}`.replace(/\s+/g, '-').toUpperCase(),
+    macro,
+    name,
+    normalizedName: normalizeCatalogText(name),
+    active: true,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  })),
+);

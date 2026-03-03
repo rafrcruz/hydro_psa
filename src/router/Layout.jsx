@@ -1,7 +1,7 @@
 ﻿import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { useEffect } from 'react';
 import { useProfile } from '../contexts/ProfileContext';
-import { routeConfig } from './routeConfig';
+import { getDefaultRoute, routeConfig } from './routeConfig';
 import TopBar from '../components/TopBar';
 import Sidebar from '../components/Sidebar';
 import Breadcrumbs from '../components/Breadcrumbs';
@@ -12,20 +12,27 @@ import { bootstrapMockApi } from '../services/mockApi';
 export default function Layout() {
   const { profile } = useProfile();
   const location = useLocation();
+  const defaultRoute = getDefaultRoute(profile);
 
   useEffect(() => {
     bootstrapMockApi();
   }, []);
 
   const allowedRoutes = routeConfig[profile].map((route) => route.path);
+  const sharedRoutes = ['/acesso-negado'];
+  const routesForValidation = [...allowedRoutes, ...sharedRoutes];
 
-  const canAccess = allowedRoutes.some((routePath) => {
-    const regex = new RegExp(`^${routePath.replace(/:\\w+/g, '[^/]+')}$`);
+  const canAccess = routesForValidation.some((routePath) => {
+    const regex = new RegExp(`^${routePath.replace(/:\w+/g, '[^/]+')}$`);
     return regex.test(location.pathname);
   });
 
-  if (location.pathname === '/' || !canAccess) {
-    return <Navigate to={allowedRoutes[0]} replace />;
+  if (location.pathname === '/') {
+    return <Navigate to={defaultRoute} replace />;
+  }
+
+  if (!canAccess) {
+    return <Navigate to={defaultRoute} replace />;
   }
 
   return (

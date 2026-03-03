@@ -8,6 +8,7 @@ import AutomacaoPainelPage from '../pages/AutomacaoPainelPage';
 import CatalogoPage from '../pages/CatalogoPage';
 import UsuariosPage from '../pages/UsuariosPage';
 import GestaoDashboardPage from '../pages/GestaoDashboardPage';
+import AcessoNegadoPage from '../pages/AcessoNegadoPage';
 
 export default function AppRoutes() {
   return (
@@ -28,6 +29,7 @@ export default function AppRoutes() {
         <Route path="automacao/usuarios" element={<UsuariosPage />} />
 
         <Route path="gestao/dashboard" element={<GestaoDashboardPage />} />
+        <Route path="acesso-negado" element={<AcessoNegadoPage />} />
       </Route>
       <Route path="*" element={<p className="p-6">Página não encontrada.</p>} />
     </Routes>

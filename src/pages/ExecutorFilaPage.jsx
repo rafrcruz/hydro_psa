@@ -59,7 +59,7 @@ export default function ExecutorFilaPage() {
         {loading ? (
           <p className="text-aluminium">Carregando...</p>
         ) : (
-          <RequestTable requests={requests} basePath={detailBasePath} showResponsavel />
+          <RequestTable requests={requests} basePath={detailBasePath} showResponsavel paginated pageSize={8} />
         )}
       </div>
     </section>
