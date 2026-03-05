@@ -1,48 +1,53 @@
-﻿# Hydro PSA
+# Hydro PSA Demonstration
 
-Aplicacao de demonstracao para o cliente Hydro.
+This project is a demonstration application for the client Hydro, simulating an **Automation Request Portal (PSA)** with a service desk experience.
 
-## Objetivo
+## Features
 
-Este projeto simula um **Portal de Solicitacoes da Automacao (PSA)** com experiencia de service desk:
-- abertura de chamados;
-- fila de atendimento;
-- acompanhamento de status;
-- painel de automacao e visao gerencial.
+- **Request Creation:** Users can open new support tickets.
+- **Service Queue:** A queue system for managing incoming requests.
+- **Status Tracking:** Users can track the status of their requests.
+- **Dashboards:** Panels for automation and management views.
 
-## Arquitetura da demo
+## Technical Architecture
 
-- Stack: React + Vite + Tailwind.
-- Somente frontend (sem backend real).
-- Persistencia local em IndexedDB com `Dexie`.
-- Seed inicial automatico:
-  - se o banco local estiver vazio, dados mock sao inseridos;
-  - se ja existir banco no navegador, os dados existentes sao reutilizados.
+This is a **frontend-only** application built with the following stack:
 
-Isso gera comportamento de prototipo de alta fidelidade sem servidor.
+- **Framework:** React + Vite
+- **Styling:** Tailwind CSS
+- **Local Storage:** `Dexie.js` for IndexedDB persistence.
 
-## Como rodar
+### Data Persistence
 
-```bash
-npm install
-npm run dev
-```
+The application uses the browser's IndexedDB for local data storage.
+- On the first load, if the local database is empty, it's seeded with mock data.
+- If data already exists, it's reused, allowing for a high-fidelity prototype experience without a backend.
 
-Build de producao:
+## Available Scripts
 
-```bash
-npm run build
-```
+In the project directory, you can run:
 
-Lint:
+### `npm run dev`
 
-```bash
-npm run lint
-```
+Runs the app in development mode.
+Open [http://localhost:5173](http://localhost:5173) to view it in the browser.
 
-## Estrutura principal
+### `npm run build`
 
-- `src/data/`: schema e seed da base mock local.
-- `src/services/mockApi.js`: camada assincrona que simula API.
-- `src/pages/`: telas por perfil (solicitante, executor, automacao, gestao).
-- `src/router/`: rotas e controle de acesso por perfil.
+Builds the app for production to the `dist` folder.
+
+### `npm run lint`
+
+Lints the project files using ESLint.
+
+### `npm run preview`
+
+Serves the production build locally for preview.
+
+## Project Structure
+
+- `src/data/`: Contains the local database schema and seed data.
+- `src/services/mockApi.js`: Simulates an asynchronous API layer.
+- `src/pages/`: Contains the main pages for different user profiles (requester, executor, automation, management).
+- `src/router/`: Handles routing and access control based on user profiles.
+- `src/components/`: Reusable UI components.
